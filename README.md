@@ -1,4 +1,5 @@
-# T2T-Bamei
+# The complete T2T Asian pig genome and graph pangenome provide new insights into pig diversity
+Domestic pig (Sus scrofa) is a crucial livestock species, providing significant meat resources and serving as an important biomedical research model. During the various domestication processes, European pigs have retained a substantial proportion of Asian pig ancestry. Nevertheless, most studies have relied on the European pig genome as the reference for research for a long time. Bamei is one of the most well-known indigenous pig breeds in China, renowned for its excellent meat quality and high reproductive performance. Here, we report a complete genome assembly of Bamei pig, the 2,659.1 Mb telomere-to-telomere (T2T) Bamei genome and explore its centromere composition and rDNA features. We annotated 473 protein-coding genes that had not been annotated in the pig reference genome (Sscrofa11.1). In addition, we assembled the most comprehensive pig pan-genome to date, comprising 32 haploid and 29 diploid genomes with the Bamei T2T as the reference backbone.
 
-
-# Code
+# Contact me
+Email: lidong9866@nwsuaf.edu.cn; lidong199866@163.com
