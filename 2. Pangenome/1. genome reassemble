@@ -1,1 +1,73 @@
+#For Pacbio HIFI data, we use hifiasm for assembly
+
+hifiasm -o genome.hifi -t 256 genome.hifi.fq.gz 2> genome.hifi.log
+awk '/^S/{print ">"$2;print $3}' hifiasm.gfa > hifiasm.fa
+
+
+#For Nanopore and Pacbio clr data, we use nextdenovo for assembly
+
+# nextdenovo
+nextDenovo run.cfg
+
+## run.cfg 
+
+[General]
+job_type = local
+job_prefix = nextDenovo
+task = all # 'all', 'correct', 'assemble'
+rewrite = yes # yes/no
+deltmp = yes
+rerun = 3
+parallel_jobs = 6
+input_type = raw
+read_type = ont/clr
+input_fofn = ./input.fofn
+workdir = ./01_rundir
+
+[correct_option]
+read_cutoff = 20k
+genome_size = 2.6g
+pa_correction = 5
+sort_options = -m 150g -t 30
+minimap2_options_raw =  -t 36
+correction_options = -p 30
+
+[assemble_option]
+minimap2_options_cns =  -t 36
+nextgraph_options = -a 1
+
+
+#########For genomes with hic, chromosome assembly was performed using juicer and 3ddna
+
+# Hi-C
+# prepare
+python /home/lidong/Software/juicer-1.6/misc/generate_site_positions.py MboI draft.genome tabasco.fasta
+awk 'BEGIN{OFS="\t"}{print $1, $NF}' draft.genome_MboI.txt > draft.genome.chrom.sizes
+# jucier
+/home/lidong/Software/juicer-1.6/CPU/juicer.sh -g tabasco \
+-s MboI \
+-D /home/lidong/Software/juicer-1.6 -z /ref/tabasco.fasta \
+-y /ref/draft.genome_MboI.txt \
+-p /ref/draft.genome.chrom.sizes \
+-t 128 &>juicer.log
+
+# 3DDNA-human-correct
+awk -f /home/lidong/Software/3d-dna-201008/utils/wrap-fasta-sequence.awk tabasco.fa > tabasco.wrapped.fa
+/home/lidong/Software/3d-dna-201008/run-asm-pipeline.sh -r 0 tabasco.wrapped.fa merged_nodups.txt
+# human check
+/home/lidong/Software/3d-dna-201008/run-asm-pipeline-post-review.sh -r tabasco.wrapped.assembly tabasco.wrapped.fa merged_nodups.txt 
+
+
+#########For genomes without hic, pseudochromosome assembly was performed using Ragatag
+conda activate Ragtag
+ragtag.py scaffold GCF_000003025.6_Sscrofa11.1_genomic.fna ragtag_output/ragtag.correct.fasta -o final_result -t 10
+
+
+
+
+######For individuals with second-generation resequencing, we used Nextpolish for polishing
+
+/home/lidong/Software/NextPolish/lib/nextpolish1.py -g raw.fasta -t 1 -p 64 -s raw.bam > nextpolish1.fasta
+
+
 
