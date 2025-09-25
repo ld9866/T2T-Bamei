@@ -1,1 +1,10 @@
+# hifiasm
+hifiasm -o Bamei.hifi.ont.hic -t 256 --h1 Bamei_1.clean.fq.gz --h2 Bamei_2.clean.fq.gz --ul Bamei.ont.fastq.gz Bamei.hifi.fq.gz 2> Bamei.hifi.ont.hic.log
+awk '/^S/{print ">"$2;print $3}' hifiasm.gfa > hifiasm.fa
+
+# verkko
+verkko -d Bamei.verrkko --hifi Bamei.hifi.fastq.gz --nano Bamei.ont.fastq.gz --hic1 Bamei.HiC_R1.clean.fastq.gz --hic2 Bamei.HiC_R2.clean.fastq.gz --local-memory 600 2>log
+
+# nextdenovo
+nextDenovo run.cfg
 
