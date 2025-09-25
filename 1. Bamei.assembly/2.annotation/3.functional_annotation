@@ -1,1 +1,23 @@
+# Functional Annotation with Diamond
+# -----------------------------
+# Input protein file
+PROTEINS="genome.proteins.fa"
 
+# Diamond databases (replace with actual paths)
+NR_DB="/path/to/databases/NR/nr.dmnd"
+SWISS_DB="/path/to/databases/SwissProt/uniprot.dmnd"
+TREMBL_DB="/path/to/databases/TrEMBL/trembl.dmnd"
+
+# Run Diamond BLASTp against NR
+diamond blastp --max-target-seqs 1 --evalue 1e-5 --max-hsps 1 \
+  -d ${NR_DB} --threads 16 -q ${PROTEINS} -o match2.Nr.tsv &> log.nr
+
+# Run Diamond BLASTp against Swiss-Prot
+diamond blastp --max-target-seqs 1 --evalue 1e-5 --max-hsps 1 \
+  -d ${SWISS_DB} --threads 10 -q ${PROTEINS} -o match2.SwissProt.tsv &> log.swissprot
+
+# Run Diamond BLASTp against TrEMBL
+diamond blastp --max-target-seqs 1 --evalue 1e-5 --max-hsps 1 \
+  -d ${TREMBL_DB} --threads 16 -q ${PROTEINS} -o match2.TrEMBL.tsv &> log.trembl
+
+echo "Functional annotation completed!"
