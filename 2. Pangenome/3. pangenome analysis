@@ -1,1 +1,6 @@
+## Pan-genome construction using minigraph-cactus
+
+docker run -it -v /home/lidong/MC:/data quay.io/comparative-genomics-toolkit/cactus:v2.9.7-gpu cactus-pangenome ./js ./fa.list --outDir primates-pg --outName primates-pg --reference tabasco --vcf --giraffe --gfa --gbz --xg --odgi --viz --maxCores 64 --maxMemory 900G --mgCores 64  --mapCores 64
+
+
 
