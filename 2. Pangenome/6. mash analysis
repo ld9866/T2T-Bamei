@@ -1,1 +1,12 @@
+## Build a phylogenetic tree using the mashtree tool based on whole genome sequences
+## Input: All genome files in .fa format in the current directory
+## Output: Phylogenetic tree file tree.dnd in Newick format
 
+# -numcpus 30: Specify using 30 CPU cores for parallel processing to accelerate computation
+# *.fa: Use wildcard to match all genome files with .fa extension in the current directory
+# > tree.dnd: Redirect the generated tree file output to tree.dnd (standard Newick format)
+
+
+/home/lidong/Software/mashtree-1.4.6/bin/mashtree -numcpus 30 *.fa > tree.dnd
+
+## Visualization on the iTol website
