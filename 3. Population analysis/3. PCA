@@ -1,1 +1,5 @@
+# Exclude out group information
+plink --bfile 1486.snp.qc.ld --remove remove.list --make-beed --out 1485.snp.qc.ld
 
+# Principal component analysis
+plink -bfile 1485.snp.qc.ld --pca 10 --out 1485.snp.qc.ld
