@@ -1,1 +1,21 @@
+# Admixture for all sample
+for i in {2..10};
+do
+admixture -j10 --cv 1485.snp.qc.ld.bed ${i} | tee log${i}.out & 
+done
 
+# Admixture for wild sample
+plink --bfile 1485.snp.qc.ld --keep keep.list --make-beed --out 116.wild
+
+for i in {2..10};
+do
+admixture -j10 --cv 116.wild.bed ${i} | tee log${i}.out & 
+done
+
+# Admixture for European wild sample
+plink --bfile 116.wild --keep keep.list --make-beed --out 38.EW
+
+for i in {2..10};
+do
+admixture -j10 --cv 38.EW.bed ${i} | tee log${i}.out & 
+done
