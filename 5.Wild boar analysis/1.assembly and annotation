@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+###############################################################################
+# Script: genome_pipeline.sh
+# Author: Lidong
+# Date: 2026-03-09
+#
+# Description:
+# Comprehensive genome assembly and annotation pipeline including:
+#   1. Genome assembly using NextDenovo
+#   2. Scaffolding using CPhasing
+#   3. Structural genome annotation using EGAPx
+#   4. Functional annotation using DIAMOND
+#
+# Requirements:
+#   NextDenovo, CPhasing, EGAPx, DIAMOND, Conda/Singularity
+#
+###############################################################################
+
+set -euo pipefail
+
+############################
+# Global parameters
+############################
+
+THREADS=16
+CHR_NUM=19
+
+ASSEMBLY="groups.review.change1.assembly"
+AGP="groups.review.change1.agp"
+GENOME_FA="polished_genome.fa"
+
+PROTEINS="genome.proteins.fa"
+
+# Database paths (modify as needed)
+NR_DB="/path/to/databases/NR/nr.dmnd"
+SWISS_DB="/path/to/databases/SwissProt/uniprot.dmnd"
+TREMBL_DB="/path/to/databases/TrEMBL/trembl.dmnd"
+
+EGAPX_SCRIPT="/path/to/egapx/ui/egapx.py"
+EGAPX_CONFIG="example.RNA.Protein.yaml"
+EGAPX_CACHE="/path/to/egapx/local_cache"
+
+###############################################################################
+# Step 1: Genome Assembly (NextDenovo)
+###############################################################################
+
+echo "===== Step 1: Genome Assembly ====="
+
+nextDenovo run.cfg
+
+echo "Genome assembly completed."
+
+
+###############################################################################
+# Step 2: Scaffolding with CPhasing
+###############################################################################
+
+echo "===== Step 2: CPhasing Scaffolding ====="
+
+# Activate environment
+source activate cphasing
+
+# Convert assembly to AGP format
+cphasing utils assembly2agp ${ASSEMBLY} -n ${CHR_NUM}
+
+# Generate contig-level FASTA
+cphasing agp2fasta ${AGP} ${GENOME_FA} --contigs > contigs.fasta
+
+# Generate chromosome-level FASTA
+cphasing agp2fasta ${AGP} ${GENOME_FA} > genome.chromosome.fasta
+
+echo "CPhasing scaffolding completed."
+
+
+###############################################################################
+# Step 3: Genome Annotation (EGAPx)
+###############################################################################
+
+echo "===== Step 3: Structural Annotation ====="
+
+python3 ${EGAPX_SCRIPT} ${EGAPX_CONFIG} \
+    -e singularity \
+    -w annotation_workspace \
+    -o annotation_output \
+    -lc ${EGAPX_CACHE}
+
+echo "Genome annotation completed."
+
+
+###############################################################################
+# Step 4: Functional Annotation (DIAMOND)
+###############################################################################
+
+echo "===== Step 4: Functional Annotation ====="
+
+# NR database
+diamond blastp \
+    --max-target-seqs 1 \
+    --max-hsps 1 \
+    --evalue 1e-5 \
+    --threads ${THREADS} \
+    -d ${NR_DB} \
+    -q ${PROTEINS} \
+    -o match.NR.tsv \
+    &> log.nr
+
+# Swiss-Prot database
+diamond blastp \
+    --max-target-seqs 1 \
+    --max-hsps 1 \
+    --evalue 1e-5 \
+    --threads ${THREADS} \
+    -d ${SWISS_DB} \
+    -q ${PROTEINS} \
+    -o match.SwissProt.tsv \
+    &> log.swissprot
+
+# TrEMBL database
+diamond blastp \
+    --max-target-seqs 1 \
+    --max-hsps 1 \
+    --evalue 1e-5 \
+    --threads ${THREADS} \
+    -d ${TREMBL_DB} \
+    -q ${PROTEINS} \
+    -o match.TrEMBL.tsv \
+    &> log.trembl
+
+echo "Functional annotation completed."
+
+###############################################################################
+# Pipeline finished
+###############################################################################
+
+echo "===== Genome assembly and annotation pipeline finished successfully ====="
