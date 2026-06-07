@@ -1,30 +1,49 @@
-# Install snpEff
-cd dir_path1
+#!/bin/bash
+
+###############################################################################
+# snpEff Annotation Pipeline
+#
+# Project: Bamei Pangenome Analysis
+# Author: Lidong
+# Date: 2026-06-07
+###############################################################################
+
+# =============================================================================
+# 1. Install snpEff
+# =============================================================================
+cd /path/to/snpEff
 wget https://snpeff.odsp.astrazeneca.com/versions/snpEff_latest_core.zip
 unzip snpEff_latest_core.zip
 
-# Create the required folder
+# =============================================================================
+# 2. Setup Database Structure
+# =============================================================================
 cd snpEff
-mkdir data && cd data
-mkdir BMT2T genomes
+mkdir -p data/BMT2T data/genomes
 
-# Put the required genome files and index files into the genomes folder
-mv dir_path2/bameit2t.fa ./genomes/BMT2T.fa
-mv dir_path2/bameit2t.fa.fai ./genomes/BMT2T.fa.fai
+# Copy genome files
+cp /path/to/bameit2t.fa data/genomes/BMT2T.fa
+cp /path/to/bameit2t.fa.fai data/genomes/BMT2T.fa.fai
 
-# Place the annotation file in the Sscorfa folder and rename it genes.gff
-mv dir_path/bameit2t.gff ./BMT2T/genes.gff
+# Copy annotation file
+cp /path/to/bameit2t.gff data/BMT2T/genes.gff
 
-# Obtain CDS sequence and amino acid sequence
-cd BMT2T
+# =============================================================================
+# 3. Extract CDS and Protein Sequences
+# =============================================================================
+cd data/BMT2T
 gffread genes.gff -g ../genomes/BMT2T.fa -y protein.fa -x cds.fa
 
-# Configure snpEf/snpEff.config file
-cd dir_path1/snpEff
-echo "BMT2T.genome:BMT2T" >> snpEff.config
+# =============================================================================
+# 4. Configure snpEff.config
+# =============================================================================
+cd /path/to/snpEff/snpEff
+echo "BMT2T.genome : BMT2T" >> snpEff.config
 
-# Establish annotation database
+# =============================================================================
+# 5. Build Database & Annotate VCF
+# =============================================================================
 java -jar snpEff/snpEff.jar build -gff3 BMT2T
+java -jar snpEff/snpEff.jar -v BMT2T /path/to/your.vcf.gz > /path/to/your.ann.vcf
 
-# Annotate the vcf file
-java -jar snpEff/snpEff.jar -v BMT2T dir_path3/your.vcf.gz > dir_path3/your.ann.vcf
+echo "[$(date)] INFO: snpEff annotation completed"
