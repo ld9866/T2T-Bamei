@@ -1,5 +1,116 @@
-# Exclude out group information
-plink --bfile 1486.snp.qc.ld --remove remove.list --make-beed --out 1485.snp.qc.ld
+#!/bin/bash
 
-# Principal component analysis
-plink -bfile 1485.snp.qc.ld --pca 10 --out 1485.snp.qc.ld
+###############################################################################
+# Outgroup Removal & Principal Component Analysis (PCA) Pipeline
+#
+# Project: Tabasco Pangenome Analysis
+# Author: Lidong
+# Date: 2026-06-07
+# Version: 1.0
+#
+# Description:
+#   This pipeline removes specified outgroup samples from PLINK dataset
+#   and performs Principal Component Analysis (PCA) for population structure
+#   inference.
+#
+# Dependencies:
+#   - PLINK 1.9
+###############################################################################
+
+# =============================================================================
+# 1. Configurations
+# =============================================================================
+INPUT_PREFIX="1486.snp.qc.ld"
+OUTPUT_PREFIX="1485.snp.qc.ld"
+REMOVE_LIST="remove.list"          # List of outgroup samples to remove (one per line)
+PCA_COMPONENTS=10                   # Number of principal components to output
+
+# =============================================================================
+# 2. Pre-flight Checks
+# =============================================================================
+echo "[$(date)] INFO: Starting outgroup removal and PCA pipeline..."
+
+# Check if input files exist
+if [ ! -f "${INPUT_PREFIX}.bed" ] || [ ! -f "${INPUT_PREFIX}.bim" ] || [ ! -f "${INPUT_PREFIX}.fam" ]; then
+    echo "ERROR: Input PLINK files ${INPUT_PREFIX}.bed/bim/fam not found!"
+    exit 1
+fi
+
+# Check if remove list exists
+if [ ! -f "${REMOVE_LIST}" ]; then
+    echo "WARNING: Remove list ${REMOVE_LIST} not found. No samples will be removed."
+    REMOVE_FLAG=""
+else
+    REMOVE_FLAG="--remove ${REMOVE_LIST}"
+    echo "[$(date)] INFO: Remove list found: ${REMOVE_LIST}"
+fi
+
+# =============================================================================
+# 3. Remove Outgroup Samples
+# =============================================================================
+echo "[$(date)] INFO: Removing outgroup samples..."
+
+plink --bfile ${INPUT_PREFIX} \
+    ${REMOVE_FLAG} \
+    --make-bed \
+    --out ${OUTPUT_PREFIX}
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Outgroup removal failed!"
+    exit 1
+fi
+
+# Count samples before and after removal
+if [ -f "${REMOVE_LIST}" ]; then
+    original_samples=$(wc -l < ${INPUT_PREFIX}.fam)
+    removed_samples=$(wc -l < ${REMOVE_LIST})
+    remaining_samples=$((original_samples - removed_samples))
+    echo "[$(date)] INFO: Removed ${removed_samples} samples. Remaining: ${remaining_samples}"
+fi
+
+# =============================================================================
+# 4. Principal Component Analysis (PCA)
+# =============================================================================
+echo "[$(date)] INFO: Running PCA (${PCA_COMPONENTS} components)..."
+
+plink --bfile ${OUTPUT_PREFIX} \
+    --pca ${PCA_COMPONENTS} \
+    --out ${OUTPUT_PREFIX}
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: PCA analysis failed!"
+    exit 1
+fi
+
+echo "[$(date)] INFO: PCA completed successfully"
+
+# =============================================================================
+# 5. Generate PCA Summary
+# =============================================================================
+echo "[$(date)] INFO: Generating PCA summary..."
+
+# Calculate variance explained by each PC (PLINK outputs eigenvals in .log file)
+if [ -f "${OUTPUT_PREFIX}.log" ]; then
+    echo "Variance explained by each principal component:"
+    grep -i "eigenvalue" ${OUTPUT_PREFIX}.log | head -${PCA_COMPONENTS} || echo "  (Check ${OUTPUT_PREFIX}.log for eigenvalues)"
+fi
+
+# =============================================================================
+# 6. Completion Summary
+# =============================================================================
+echo "-----------------------------------------------------------------------"
+echo "Outgroup Removal & PCA Pipeline Completed Successfully!"
+echo "Timestamp: $(date)"
+echo ""
+echo "Output files:"
+echo "  - ${OUTPUT_PREFIX}.bed/bim/fam        (PLINK files without outgroups)"
+echo "  - ${OUTPUT_PREFIX}.eigenvec           (PCA eigenvectors - sample coordinates)"
+echo "  - ${OUTPUT_PREFIX}.eigenval           (PCA eigenvalues - variance explained)"
+echo ""
+echo "Next steps:"
+echo "  1. Plot PCA using R/Python:"
+echo "     - PC1 vs PC2 for population structure"
+echo "     - Scree plot for variance explained"
+echo "  2. Use eigenvec file for visualization in:"
+echo "     - R (ggplot2), Python (matplotlib/seaborn), or iTOL"
+echo "-----------------------------------------------------------------------"
