@@ -1,39 +1,84 @@
-## Gene family analysis
+#!/bin/bash
 
-./OrthoFinder-2.5.5/orthofinder.py -t 20 -a 20 -f ./all.pro
+###############################################################################
+# Gene Family Analysis Pipeline (OrthoFinder)
+#
+# Project: Tabasco Pangenome Analysis
+# Author: Lidong
+# Date: 2026-06-07
+# Version: 1.0
+#
+# Description:
+#    This script performs gene family clustering analysis using OrthoFinder.
+#    It identifies orthogroups across multiple genomes, providing core gene
+#    families, pan gene families, and species-specific gene annotations.
+###############################################################################
 
-## Visualization
+# =============================================================================
+# 1. Global Configurations & Environment
+# =============================================================================
+# OrthoFinder Settings
+ORTHOFINDER="./OrthoFinder-2.5.5/orthofinder.py"
 
-rm(list = ls())
-library(tidyverse)
-library(readxl)
-library(patchwork)
-setwd("C:\\Users\\xxx\\Desktop\\genefamily")
+# Input/Output
+INPUT_DIR="./all.pro"           # Directory containing proteome FASTA files
+OUTPUT_DIR="./OrthoFinder_Results"
 
-df <- read_xlsx("GeneFamilyAnalysis2.xlsx", sheet = 1, col_names = TRUE) %>%
-  pivot_longer(cols = c("Core", "Pan"), names_to = "group", values_to = "value")
+# Resource Allocation
+THREADS=20                      # -t: BLAST threads
+BLAST_THREADS=20                # -a: BLAST threads for analysis
 
-coredf <- df %>% filter(group == "Core")
-pandf  <- df %>% filter(group == "Pan")
+# =============================================================================
+# 2. Pre-flight Checks
+# =============================================================================
+echo "[$(date)] INFO: Starting Gene Family Analysis Pipeline..."
 
-p1 <- ggplot(df, aes(x = `Individual Number`, y = value, color = group)) +
-  geom_point(shape = 4, size = 6) +
-  scale_x_continuous(breaks = seq(2, 28, by = 1)) +
-  scale_y_continuous(labels = scales::number_format(), breaks = scales::pretty_breaks(n = 20)) +
-  geom_smooth(coredf, method = "loess",
-              mapping = aes(x = `Individual Number`, y = value),
-              color = "black",
-              se = FALSE) +
-  geom_smooth(pandf, method = "loess",
-              mapping = aes(x = `Individual Number`, y = value),
-              color = "black",
-              se = FALSE) +
-  scale_color_manual(values = c("#D17431", "#39729C")) +
-  labs(x = "Number of genomes", 
-       y = "Number of gene families", 
-       color = "") +
-  theme_classic()
+if [ ! -f "${ORTHOFINDER}" ]; then
+    echo "ERROR: OrthoFinder not found at ${ORTHOFINDER}"
+    echo "Please check the path to orthofinder.py"
+    exit 1
+fi
 
-p1
+if [ ! -d "${INPUT_DIR}" ]; then
+    echo "ERROR: Input directory ${INPUT_DIR} not found!"
+    echo "Please ensure the directory contains proteome FASTA files"
+    exit 1
+fi
 
+# Create output directory if needed
+if [ ! -d "${OUTPUT_DIR}" ]; then
+    echo "INFO: Creating output directory: ${OUTPUT_DIR}"
+    mkdir -p "${OUTPUT_DIR}"
+fi
 
+# =============================================================================
+# 3. Execution: OrthoFinder Gene Family Clustering
+# =============================================================================
+echo "[$(date)] STAGE: Running OrthoFinder..."
+
+python ${ORTHOFINDER} \
+    -t ${THREADS} \
+    -a ${BLAST_THREADS} \
+    -f ${INPUT_DIR} \
+    -o ${OUTPUT_DIR}
+
+# =============================================================================
+# 4. Pipeline Completion & Summary
+# =============================================================================
+if [ $? -eq 0 ]; then
+    echo "-----------------------------------------------------------------------"
+    echo "Gene Family Analysis Completed Successfully!"
+    echo "Timestamp: $(date)"
+    echo "Output Location: ${OUTPUT_DIR}"
+    echo ""
+    echo "Key Output Files:"
+    echo "  - Orthogroups.tsv              (Gene family assignments)"
+    echo "  - Orthogroups_UnassignedGenes.tsv"
+    echo "  - Comparative_Statistics.tsv   (Core/Pan gene statistics)"
+    echo "  - Orthologues_stats_*.tsv      (Ortholog statistics)"
+    echo "  - Species_Tree/                 (Phylogenetic tree)"
+    echo "-----------------------------------------------------------------------"
+else
+    echo "ERROR: OrthoFinder pipeline failed. Check logs for details."
+    exit 1
+fi
