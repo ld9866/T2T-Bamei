@@ -1,85 +1,104 @@
-# Convert vcf files to plink format
+#!/bin/bash
+
+###############################################################################
+# ROH (Runs of Homozygosity) Analysis Pipeline
+#
+# Project: Bamei Pangenome Analysis
+# Author: Lidong
+# Date: 2026-06-07
+# Version: 1.0
+#
+# Description:
+#   This pipeline performs ROH analysis using PLINK and calculates genome
+#   coverage and F_ROH statistics.
+###############################################################################
+
+# =============================================================================
+# 1. VCF → PLINK
+# =============================================================================
+echo "[$(date)] INFO: Converting VCF to PLINK format..."
+
 plink --vcf Pig.snps.filtered.simple.M2.vcf.gz --make-bed --out 1486.snp
 plink --bfile 1486.snp --recode --out 1486.snp
 
-# Quality control
+# =============================================================================
+# 2. Quality Control
+# =============================================================================
+echo "[$(date)] INFO: QC filtering (geno 0.01, maf 0.1)..."
+
 plink --bfile 1486.snp --geno 0.01 --maf 0.1 --make-bed --out 1486.snp.qc2
 
-# ROH analysis
-plink --bfile 1486.snp.qc2 --homozyg --homozyg-density 500 --homozyg-gap 100 --homozyg-kb 100 --homozyg-snp 50 --homozyg-window-het 1 --homozyg-window-missing 5 --homozyg-window-snp 50 --noweb --out 1486.snp.qc2.ROH
+# =============================================================================
+# 3. ROH Analysis
+# =============================================================================
+echo "[$(date)] INFO: Running ROH analysis..."
 
-# Calculate the total length of genome coverage
-rm(list=ls())
+plink --bfile 1486.snp.qc2 --homozyg \
+    --homozyg-density 500 \
+    --homozyg-gap 100 \
+    --homozyg-kb 100 \
+    --homozyg-snp 50 \
+    --homozyg-window-het 1 \
+    --homozyg-window-missing 5 \
+    --homozyg-window-snp 50 \
+    --noweb \
+    --out 1486.snp.qc2.ROH
+
+echo "[$(date)] INFO: ROH analysis completed"
+
+# =============================================================================
+# 4. Completion Summary
+# =============================================================================
+echo "-----------------------------------------------------------------------"
+echo "ROH Analysis Completed!"
+echo "Timestamp: $(date)"
+echo "Output: 1486.snp.qc2.ROH.hom"
+echo ""
+echo "Next step: Run R script for genome coverage and F_ROH calculation"
+echo "-----------------------------------------------------------------------"
+
+# =============================================================================
+# R Script for ROH Statistics (save as roh_stats.R and run)
+# =============================================================================
+cat << 'EOF' > roh_stats.R
+# ROH Statistics Script
+# Run after PLINK ROH analysis
+
 library(dplyr)
-options(stringsAsFactors=FALSE)
-options(scipen=999)
+
 setwd("work_path/")
-map=read.table('1486.snp.qc.map',header=FALSE)
-dim(map)
-colnames(map)=c('CHR','snp','pos_cM','pos_bp') 
-head(map)
-mapTL= map %>% group_by(CHR) %>% summarise(n=n(),TL=max(pos_bp))
-mapTL = as.data.frame(mapTL) 
-mapTL
-Total_length_bp=sum(mapTL$TL) 
-Total_length_Mb=Total_length_bp/1000000
-Total_length_Mb
+
+# Calculate genome coverage
+map <- read.table('1486.snp.qc2.map', header=FALSE)
+colnames(map) <- c('CHR', 'snp', 'pos_cM', 'pos_bp')
+mapTL <- map %>% group_by(CHR) %>% summarise(TL = max(pos_bp))
+total_Mb <- sum(mapTL$TL) / 1e6
+cat("Total genome length:", total_Mb, "Mb\n")
 
 # Analyze ROH data
-rm(list=ls())
-library(dplyr)
-options(stringsAsFactors=FALSE)
-options(scipen=999)
-setwd("work_path/")
-dat=read.table("1486.snp.qc2.ROH.hom",header=TRUE)
-dim(dat)
-str(dat) 
-colnames(dat)
-dat$Mb=dat$KB/1000
-summary(dat)
-idvec=unique(dat$IID)
-length(idvec)
-head(idvec)
-out=matrix(nrow=length(idvec),ncol=9)
-colnames(out)=c('id','nseg','nseg_short','nseg_long','TL_short','TL_long','Froh','Fshort','Flong')
-head(out)
-cnt=0
-for (i in idvec){ 
-  sub=dat[dat$IID==i,]
-  cnt=cnt+1
-  print(cnt)
-  nseg=nrow(sub)
-  
-  TL=sum(sub$Mb) 
-  Froh=TL/2475.807
-  
-  
-  Short=sub[sub$Mb< 1.5,]
-  Long=sub[sub$Mb>= 1.5,]
-  
-  nShort=nrow(Short)
-  nLong=nrow(Long)
-  
-  TL_short=sum(Short$Mb)
-  TL_long=sum(Long$Mb)
-  
-  Fshort= sum(Short$Mb)/2475.807
-  Flong= sum(Long$Mb)/2475.807
-  out[cnt,1]=i
-  out[cnt,2]=nseg
-  out[cnt,3]=nShort
-  out[cnt,4]=nLong
-  out[cnt,5]=TL_short
-  out[cnt,6]=TL_long
-  out[cnt,7]=Froh
-  out[cnt,8]=Fshort
-  out[cnt,9]=Flong 
+dat <- read.table("1486.snp.qc2.ROH.hom", header=TRUE)
+dat$Mb <- dat$KB / 1000
+
+idvec <- unique(dat$IID)
+out <- data.frame(id = idvec, nseg = NA, nseg_short = NA, nseg_long = NA,
+                  TL_short = NA, TL_long = NA, Froh = NA, Fshort = NA, Flong = NA)
+
+for (i in seq_along(idvec)) {
+    sub <- dat[dat$IID == idvec[i], ]
+    TL <- sum(sub$Mb)
+    Froh <- TL / total_Mb
+    
+    short <- sub[sub$Mb < 1.5, ]
+    long <- sub[sub$Mb >= 1.5, ]
+    
+    out[i, ] <- c(idvec[i], nrow(sub), nrow(short), nrow(long),
+                  sum(short$Mb), sum(long$Mb), Froh,
+                  sum(short$Mb)/total_Mb, sum(long$Mb)/total_Mb)
 }
-out=as.data.frame(out)
-summary(out[,-1])
-output_nameTXT=paste("1486.snp.qc2.ROH",1.5,"Mb.txt",sep="")
-output_nameTXT
-output_nameCSV=paste("1486.snp.qc2.ROH",1.5,"Mb.csv",sep="")
-output_nameCSV
-write.table(out,output_nameTXT,row.names=FALSE,col.names=TRUE)
-write.csv(out,output_nameCSV,row.names=FALSE,col.names=TRUE)
+
+write.csv(out, "1486.snp.qc2.ROH.1.5Mb.csv", row.names=FALSE)
+cat("Results saved to 1486.snp.qc2.ROH.1.5Mb.csv\n")
+EOF
+
+echo "R script saved as roh_stats.R"
+echo "Run: Rscript roh_stats.R"
