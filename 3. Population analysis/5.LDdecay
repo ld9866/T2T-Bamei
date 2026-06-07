@@ -1,16 +1,73 @@
-# Convert vcf files to plink format
-plink --vcf Pig.snps.filtered.simple.M2.vcf.gz --make-bed --out 1486.snp
+#!/bin/bash
 
-# Quality control
-plink --bfile 1486.snp --geno 0.01 --maf 0.1 --make-bed --out 1486.snp.qc2
+###############################################################################
+# Population Genetics Analysis Pipeline (VCF → PLINK → PopLDdecay)
+#
+# Project: Bamei Pangenome Analysis
+# Author: Lidong
+# Date: 2026-06-07
+# Version: 1.0
+#
+# Description:
+#   This pipeline converts VCF to PLINK, performs QC, extracts population subsets,
+#   and runs PopLDdecay for linkage disequilibrium analysis.
+###############################################################################
 
-# Convert plink format files to vcf files
-plink --bfile 1486.snp.qc2 --recode vcf --out 1486.snp.qc2
-bgzip 1486.snp.qc2.vcf
+# =============================================================================
+# 1. Configurations
+# =============================================================================
+VCF_INPUT="Pig.snps.filtered.simple.M2.vcf.gz"
+PREFIX="1486"
+GROUP_LIST="list"                    # File with group names (one per line)
 
-# Extract VCF files based on group information
-for i in `cat list`; do nohup bcftools view -S $i.txt -O z -o $i.vcf.gz 1486.snp.qc2.vcf.gz & done
+# QC thresholds
+GENO=0.01
+MAF=0.1
 
-# Analysis and Visualization
-for i in `cat list`; do nohup PopLDdecay -InVCF $i.vcf.gz -OutStat group.$i & done
+# =============================================================================
+# 2. VCF → PLINK → QC → VCF
+# =============================================================================
+echo "[$(date)] INFO: Converting VCF to PLINK format..."
+
+plink --vcf ${VCF_INPUT} --make-bed --out ${PREFIX}.snp
+
+plink --bfile ${PREFIX}.snp --geno ${GENO} --maf ${MAF} --make-bed --out ${PREFIX}.snp.qc2
+
+plink --bfile ${PREFIX}.snp.qc2 --recode vcf --out ${PREFIX}.snp.qc2
+bgzip ${PREFIX}.snp.qc2.vcf
+
+# =============================================================================
+# 3. Extract Subset VCFs by Group
+# =============================================================================
+echo "[$(date)] INFO: Extracting subset VCFs for each group..."
+
+for group in $(cat ${GROUP_LIST}); do
+    nohup bcftools view -S ${group}.txt -O z -o ${group}.vcf.gz ${PREFIX}.snp.qc2.vcf.gz &
+done
+wait
+
+# =============================================================================
+# 4. PopLDdecay Analysis
+# =============================================================================
+echo "[$(date)] INFO: Running PopLDdecay for each group..."
+
+for group in $(cat ${GROUP_LIST}); do
+    nohup PopLDdecay -InVCF ${group}.vcf.gz -OutStat group.${group} &
+done
+wait
+
+# =============================================================================
+# 5. Multi-population Visualization
+# =============================================================================
+echo "[$(date)] INFO: Generating multi-population plot..."
+
 perl /path/PopLDdecay-3.43/bin/Plot_MultiPop.pl -inList group.list -output Fig.all
+
+# =============================================================================
+# 6. Completion Summary
+# =============================================================================
+echo "-----------------------------------------------------------------------"
+echo "Population Genetics Pipeline Completed!"
+echo "Timestamp: $(date)"
+echo "Output: Fig.all (LD decay plot)"
+echo "-----------------------------------------------------------------------"
