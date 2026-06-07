@@ -1,23 +1,127 @@
-# Functional Annotation with Diamond
-# -----------------------------
-# Input protein file
+#!/bin/bash
+
+###############################################################################
+# Functional Annotation Pipeline (Diamond BLASTp)
+#
+# Project: Tabasco Pangenome Analysis
+# Author: Lidong
+# Date: 2026-06-07
+# Version: 1.0
+#
+# Description:
+#   This script performs functional annotation of protein sequences by
+#   BLASTing against NR, Swiss-Prot, and TrEMBL databases using Diamond.
+#
+# Dependencies:
+#   - Diamond (https://github.com/bbuchfink/diamond)
+###############################################################################
+
+# =============================================================================
+# 1. Configurations
+# =============================================================================
+# Input
 PROTEINS="genome.proteins.fa"
 
-# Diamond databases (replace with actual paths)
+# Database paths (update as needed)
 NR_DB="/path/to/databases/NR/nr.dmnd"
 SWISS_DB="/path/to/databases/SwissProt/uniprot.dmnd"
 TREMBL_DB="/path/to/databases/TrEMBL/trembl.dmnd"
 
-# Run Diamond BLASTp against NR
-diamond blastp --max-target-seqs 1 --evalue 1e-5 --max-hsps 1 \
-  -d ${NR_DB} --threads 16 -q ${PROTEINS} -o match2.Nr.tsv &> log.nr
+# Resource
+THREADS_NR=16
+THREADS_SWISS=10
+THREADS_TREMBL=16
 
-# Run Diamond BLASTp against Swiss-Prot
-diamond blastp --max-target-seqs 1 --evalue 1e-5 --max-hsps 1 \
-  -d ${SWISS_DB} --threads 10 -q ${PROTEINS} -o match2.SwissProt.tsv &> log.swissprot
+# Diamond parameters
+MAX_TARGETS=1
+MAX_HSPS=1
+EVALUE="1e-5"
 
-# Run Diamond BLASTp against TrEMBL
-diamond blastp --max-target-seqs 1 --evalue 1e-5 --max-hsps 1 \
-  -d ${TREMBL_DB} --threads 16 -q ${PROTEINS} -o match2.TrEMBL.tsv &> log.trembl
+# =============================================================================
+# 2. Pre-flight Checks
+# =============================================================================
+echo "[$(date)] INFO: Starting functional annotation pipeline..."
 
-echo "Functional annotation completed!"
+if [ ! -f "${PROTEINS}" ]; then
+    echo "ERROR: Protein file ${PROTEINS} not found!"
+    exit 1
+fi
+
+# =============================================================================
+# 3. Run Diamond against NR
+# =============================================================================
+echo "[$(date)] INFO: Running Diamond BLASTp against NR database..."
+
+diamond blastp \
+    --max-target-seqs ${MAX_TARGETS} \
+    --evalue ${EVALUE} \
+    --max-hsps ${MAX_HSPS} \
+    -d ${NR_DB} \
+    --threads ${THREADS_NR} \
+    -q ${PROTEINS} \
+    -o match2.Nr.tsv &> log.nr
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Diamond BLASTp against NR failed! Check log.nr"
+    exit 1
+fi
+
+echo "[$(date)] INFO: NR annotation completed"
+
+# =============================================================================
+# 4. Run Diamond against Swiss-Prot
+# =============================================================================
+echo "[$(date)] INFO: Running Diamond BLASTp against Swiss-Prot database..."
+
+diamond blastp \
+    --max-target-seqs ${MAX_TARGETS} \
+    --evalue ${EVALUE} \
+    --max-hsps ${MAX_HSPS} \
+    -d ${SWISS_DB} \
+    --threads ${THREADS_SWISS} \
+    -q ${PROTEINS} \
+    -o match2.SwissProt.tsv &> log.swissprot
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Diamond BLASTp against Swiss-Prot failed! Check log.swissprot"
+    exit 1
+fi
+
+echo "[$(date)] INFO: Swiss-Prot annotation completed"
+
+# =============================================================================
+# 5. Run Diamond against TrEMBL
+# =============================================================================
+echo "[$(date)] INFO: Running Diamond BLASTp against TrEMBL database..."
+
+diamond blastp \
+    --max-target-seqs ${MAX_TARGETS} \
+    --evalue ${EVALUE} \
+    --max-hsps ${MAX_HSPS} \
+    -d ${TREMBL_DB} \
+    --threads ${THREADS_TREMBL} \
+    -q ${PROTEINS} \
+    -o match2.TrEMBL.tsv &> log.trembl
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Diamond BLASTp against TrEMBL failed! Check log.trembl"
+    exit 1
+fi
+
+echo "[$(date)] INFO: TrEMBL annotation completed"
+
+# =============================================================================
+# 6. Completion Summary
+# =============================================================================
+echo "-----------------------------------------------------------------------"
+echo "Functional Annotation Completed Successfully!"
+echo "Timestamp: $(date)"
+echo ""
+echo "Output files:"
+echo "  - match2.Nr.tsv        (NR BLAST results)"
+echo "  - match2.SwissProt.tsv (Swiss-Prot BLAST results)"
+echo "  - match2.TrEMBL.tsv    (TrEMBL BLAST results)"
+echo ""
+echo "Log files:"
+echo "  - log.nr, log.swissprot, log.trembl"
+echo "-----------------------------------------------------------------------"
