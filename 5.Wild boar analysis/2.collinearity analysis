@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+###############################################################################
+# Script: run_GetTwoGenomeSyn.sh
+# Author: Lidong
+# Date: 2026-03-09
+#
+# Description:
+# Run NGenomeSyn GetTwoGenomeSyn.pl to detect genome synteny between two genomes.
+# This pipeline performs genome alignment using minimap2 and generates
+# syntenic blocks for downstream visualization and comparative genomics.
+#
+# Requirements:
+#   NGenomeSyn
+#   minimap2
+#
+###############################################################################
+
+set -euo pipefail
+
+############################
+# Global parameters
+############################
+
+THREADS=20
+
+# Path to NGenomeSyn installation
+NGS_BIN="NGenomeSyn/bin"
+
+# Input genome files
+GENOME_A="Duroc.fa"
+GENOME_B="LW.fa"
+
+# Output prefix
+OUT_PREFIX="LW.OUT"
+
+###############################################################################
+# Step 1: Check input files
+###############################################################################
+
+echo "===== Checking input files ====="
+
+if [[ ! -f "${GENOME_A}" ]]; then
+    echo "Error: Genome A file not found -> ${GENOME_A}"
+    exit 1
+fi
+
+if [[ ! -f "${GENOME_B}" ]]; then
+    echo "Error: Genome B file not found -> ${GENOME_B}"
+    exit 1
+fi
+
+echo "Input genomes detected."
+
+###############################################################################
+# Step 2: Run NGenomeSyn synteny detection
+###############################################################################
+
+echo "===== Running genome synteny analysis ====="
+
+${NGS_BIN}/GetTwoGenomeSyn.pl \
+    -InGenomeA "${GENOME_A}" \
+    -InGenomeB "${GENOME_B}" \
+    -MappingBin minimap2 \
+    -NumThreads ${THREADS} \
+    -OutPrefix "${OUT_PREFIX}"
+
+echo "Synteny analysis completed."
+
+###############################################################################
+# Pipeline finished
+###############################################################################
+
+echo "===== NGenomeSyn pipeline finished successfully ====="
