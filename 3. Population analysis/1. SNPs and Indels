@@ -1,93 +1,201 @@
-# NGS QC
-fastp -i ${i}_1.fastq.gz -I ${i}_2.fastq.gz -o ${i}_1.clean.fq.gz -O ${i}_2.clean.fq.gz
+#!/bin/bash
 
-# NGS mapping to genome
+###############################################################################
+# NGS Data Processing & Variant Calling Pipeline
+#
+# Project: Tabasco Pangenome Analysis
+# Author: Lidong
+# Date: 2026-06-07
+# Version: 1.0
+#
+# Description:
+#   This pipeline processes NGS data including QC, mapping, variant calling,
+#   filtering, and VCF merging for both autosomes and sex chromosomes.
+###############################################################################
+
+# =============================================================================
+# 1. Configurations
+# =============================================================================
+SAMPLE_ID=$1          # Sample ID passed as argument
+REF_GENOME="/ref/bameit2t.fa"
+THREADS_BWA=32
+THREADS_SENTIEON=128
+THREADS_BCFTOOLS=4
+
+# Depth filtering thresholds (autosomes)
+SNP_DP_MIN=8346
+SNP_DP_MAX=75115
+INDEL_DP_MIN=7985
+INDEL_DP_MAX=71868
+
+# Depth filtering thresholds (X chromosome)
+SNP_X_DP_MIN=6223
+SNP_X_DP_MAX=56003
+INDEL_X_DP_MIN=6119
+INDEL_X_DP_MAX=55070
+
+# =============================================================================
+# 2. NGS Quality Control (fastp)
+# =============================================================================
+echo "[$(date)] INFO: Running fastp QC for sample: ${SAMPLE_ID}"
+
+fastp -i ${SAMPLE_ID}_1.fastq.gz \
+      -I ${SAMPLE_ID}_2.fastq.gz \
+      -o ${SAMPLE_ID}_1.clean.fq.gz \
+      -O ${SAMPLE_ID}_2.clean.fq.gz
+
+# =============================================================================
+# 3. Mapping to Genome (Parabricks)
+# =============================================================================
+echo "[$(date)] INFO: Running Parabricks germline pipeline"
+
 docker run --rm --gpus 1 \
---volume /00.ref:/ref \
---volume /01.fastq:/workdir \
---volume /02.output:/output \
-nvcr.io/nvidia/clara/clara-parabricks:4.2.1-1 \
-pbrun germline \
---fq2bamfast \
---gvcf \
---ref /ref/bameit2t.fa \
---in-fq /workdir/${i}_1.clean.fq.gz /workdir/${i}_2.clean.fq.gz "@RG\tID:${i}\tLB:lib1\tPL:bar\tSM:${i}\tPU:${i}" \
---out-bam /output/01.bam/${i}.bam \
---out-variants /output/02.gvcf/${i}.gvcf  \
---gpuwrite \
---low-memory \
---bwa-cpu-thread-pool 32
+    --volume /00.ref:/ref \
+    --volume /01.fastq:/workdir \
+    --volume /02.output:/output \
+    nvcr.io/nvidia/clara/clara-parabricks:4.2.1-1 \
+    pbrun germline \
+    --fq2bamfast \
+    --gvcf \
+    --ref ${REF_GENOME} \
+    --in-fq /workdir/${SAMPLE_ID}_1.clean.fq.gz /workdir/${SAMPLE_ID}_2.clean.fq.gz \
+    "@RG\tID:${SAMPLE_ID}\tLB:lib1\tPL:bar\tSM:${SAMPLE_ID}\tPU:${SAMPLE_ID}" \
+    --out-bam /output/01.bam/${SAMPLE_ID}.bam \
+    --out-variants /output/02.gvcf/${SAMPLE_ID}.gvcf \
+    --gpuwrite \
+    --low-memory \
+    --bwa-cpu-thread-pool ${THREADS_BWA}
 
-# Compress GVCF files
-bgzip ${i}.gvcf
+# =============================================================================
+# 4. Compress GVCF
+# =============================================================================
+echo "[$(date)] INFO: Compressing GVCF file"
 
-# Merge GVCF files using Sentieon
-./bin/sentieon driver -t 128 -r bameit2t.fa --algo GVCFtyper ./bamei.merge.vcf.gz - < vcf_list
+bgzip ${SAMPLE_ID}.gvcf
 
-# Extract SNPs and indels from vcf file
-for i in {1..18} X Y;do nohup bcftools view -v snps -r chr${i} bamei.merge.vcf.gz -Oz -o ${i}.snps.vcf.gz --threads 4 & done
-for i in {1..18} X Y;do nohup bcftools view -v indels -r chr${i} bamei.merge.vcf.gz -Oz -o ${i}.indels.vcf.gz --threads 4 & done
+# =============================================================================
+# 5. Merge GVCFs with Sentieon
+# =============================================================================
+echo "[$(date)] INFO: Merging GVCF files with Sentieon"
 
-# Statistical sequencing depth
-for i in {1..18} X Y;do nohup bcftools query -f '%DP\n' ${i}.snps.vcf.gz > 01.snp.depth/${i}.snps.DP.txt & done
-for i in {1..18} X Y;do nohup bcftools query -f '%DP\n' ${i}.indels.vcf.gz > 02.indel.depth/${i}.indels.DP.txt & done
+./bin/sentieon driver -t ${THREADS_SENTIEON} -r ${REF_GENOME} \
+    --algo GVCFtyper ./bamei.merge.vcf.gz - < vcf_list
 
-# Quality control of autosomal SNPs and indels loci
-for i in {1..18};do bcftools view --threads 4 -e 'INFO/DP < 8346 | INFO/DP > 75115 | QD < 2.0 | QUAL < 30.0 | MQ < 40.0 | FS > 60.0 | ReadPosRankSum < -8.0 | MQRankSum < -12.5 | SOR > 3.0' -O z -o ${i}.snps.filtered.vcf.gz ${i}.snps.vcf.gz & done
-for i in {1..18};do bcftools view --threads 4 -e 'INFO/DP < 7985 | INFO/DP > 71868 | QD < 2.0 | QUAL < 30.0 | MQ < 40.0 | FS > 200.0 | ReadPosRankSum < -20.0 | MQRankSum < -12.5 | SOR > 10.0' -O z -o ${i}.indels.filtered.vcf.gz ${i}.indels.vcf.gz & done
+# =============================================================================
+# 6. Extract SNPs and Indels by Chromosome
+# =============================================================================
+echo "[$(date)] INFO: Extracting SNPs and INDELs"
 
-# Quality control of X chromosome SNPs and indels loci
-bcftools view --threads 4 -e 'INFO/DP < 6223 | INFO/DP > 56003 | QD < 2.0 | QUAL < 30.0 | MQ < 40.0 | FS > 60.0 | ReadPosRankSum < -8.0 | MQRankSum < -12.5 | SOR > 3.0' -O z -o X.snps.filtered.vcf.gz X.snps.vcf.gz
-bcftools view --threads 4 -e 'INFO/DP < 6119 | INFO/DP > 55070 | QD < 2.0 | QUAL < 30.0 | MQ < 40.0 | FS > 200.0 | ReadPosRankSum < -20.0 | MQRankSum < -12.5 | SOR > 10.0' -O z -o X.indels.filtered.vcf.gz X.indels.vcf.gz
+for chr in {1..18} X Y; do
+    nohup bcftools view -v snps -r chr${chr} bamei.merge.vcf.gz -Oz -o ${chr}.snps.vcf.gz --threads ${THREADS_BCFTOOLS} &
+    nohup bcftools view -v indels -r chr${chr} bamei.merge.vcf.gz -Oz -o ${chr}.indels.vcf.gz --threads ${THREADS_BCFTOOLS} &
+done
+wait
 
-# Simplify vcf file
-for i in {1..18} X;do nohup bcftools annotate -x ^INFO/AC,^FORMAT/GT ${i}.snps.filtered.vcf.gz -O z -o ${i}.snps.filtered.simple.vcf.gz & done
-for i in {1..18} X;do nohup bcftools annotate -x ^INFO/AC,^FORMAT/GT ${i}.indels.filtered.vcf.gz -O z -o ${i}.indels.filtered.simple.vcf.gz & done
+# =============================================================================
+# 7. Extract Depth Information
+# =============================================================================
+echo "[$(date)] INFO: Extracting sequencing depth"
 
-# Retain binary variation
-for i in {1..18} X;do nohup bcftools view -m2 -M2 ${i}.snps.filtered.simple.vcf.gz -O z -o ${i}.snps.filtered.simple.M2.vcf.gz & done
-for i in {1..18} X;do nohup bcftools view -m2 -M2 ${i}.indels.filtered.simple.vcf.gz -O z -o ${i}.indels.filtered.simple.M2.vcf.gz & done
+for chr in {1..18} X Y; do
+    nohup bcftools query -f '%DP\n' ${chr}.snps.vcf.gz > 01.snp.depth/${chr}.snps.DP.txt &
+    nohup bcftools query -f '%DP\n' ${chr}.indels.vcf.gz > 02.indel.depth/${chr}.indels.DP.txt &
+done
+wait
 
-# Build index file
-for i in {1..18} X;do nohup bcftools index ${i}.snps.filtered.simple.M2.vcf.gz & done
-for i in {1..18} X;do nohup bcftools index ${i}.indels.filtered.simple.M2.vcf.gz & done
+# =============================================================================
+# 8. Quality Control Filtering (Autosomes)
+# =============================================================================
+echo "[$(date)] INFO: Filtering autosomes"
 
-# Merge autosomal vcf files
+# SNPs
+for chr in {1..18}; do
+    bcftools view --threads ${THREADS_BCFTOOLS} \
+        -e "INFO/DP < ${SNP_DP_MIN} | INFO/DP > ${SNP_DP_MAX} | QD < 2.0 | QUAL < 30.0 | MQ < 40.0 | FS > 60.0 | ReadPosRankSum < -8.0 | MQRankSum < -12.5 | SOR > 3.0" \
+        -O z -o ${chr}.snps.filtered.vcf.gz ${chr}.snps.vcf.gz &
+done
+
+# INDELs
+for chr in {1..18}; do
+    bcftools view --threads ${THREADS_BCFTOOLS} \
+        -e "INFO/DP < ${INDEL_DP_MIN} | INFO/DP > ${INDEL_DP_MAX} | QD < 2.0 | QUAL < 30.0 | MQ < 40.0 | FS > 200.0 | ReadPosRankSum < -20.0 | MQRankSum < -12.5 | SOR > 10.0" \
+        -O z -o ${chr}.indels.filtered.vcf.gz ${chr}.indels.vcf.gz &
+done
+wait
+
+# =============================================================================
+# 9. Quality Control Filtering (X Chromosome)
+# =============================================================================
+echo "[$(date)] INFO: Filtering X chromosome"
+
+bcftools view --threads ${THREADS_BCFTOOLS} \
+    -e "INFO/DP < ${SNP_X_DP_MIN} | INFO/DP > ${SNP_X_DP_MAX} | QD < 2.0 | QUAL < 30.0 | MQ < 40.0 | FS > 60.0 | ReadPosRankSum < -8.0 | MQRankSum < -12.5 | SOR > 3.0" \
+    -O z -o X.snps.filtered.vcf.gz X.snps.vcf.gz
+
+bcftools view --threads ${THREADS_BCFTOOLS} \
+    -e "INFO/DP < ${INDEL_X_DP_MIN} | INFO/DP > ${INDEL_X_DP_MAX} | QD < 2.0 | QUAL < 30.0 | MQ < 40.0 | FS > 200.0 | ReadPosRankSum < -20.0 | MQRankSum < -12.5 | SOR > 10.0" \
+    -O z -o X.indels.filtered.vcf.gz X.indels.vcf.gz
+
+# =============================================================================
+# 10. Simplify VCF (Keep only AC and GT)
+# =============================================================================
+echo "[$(date)] INFO: Simplifying VCF files"
+
+for chr in {1..18} X; do
+    nohup bcftools annotate -x ^INFO/AC,^FORMAT/GT ${chr}.snps.filtered.vcf.gz -O z -o ${chr}.snps.filtered.simple.vcf.gz &
+    nohup bcftools annotate -x ^INFO/AC,^FORMAT/GT ${chr}.indels.filtered.vcf.gz -O z -o ${chr}.indels.filtered.simple.vcf.gz &
+done
+wait
+
+# =============================================================================
+# 11. Retain Binary Variants (biallelic)
+# =============================================================================
+echo "[$(date)] INFO: Retaining biallelic variants only"
+
+for chr in {1..18} X; do
+    nohup bcftools view -m2 -M2 ${chr}.snps.filtered.simple.vcf.gz -O z -o ${chr}.snps.filtered.simple.M2.vcf.gz &
+    nohup bcftools view -m2 -M2 ${chr}.indels.filtered.simple.vcf.gz -O z -o ${chr}.indels.filtered.simple.M2.vcf.gz &
+done
+wait
+
+# =============================================================================
+# 12. Build Index Files
+# =============================================================================
+echo "[$(date)] INFO: Building index files"
+
+for chr in {1..18} X; do
+    nohup bcftools index ${chr}.snps.filtered.simple.M2.vcf.gz &
+    nohup bcftools index ${chr}.indels.filtered.simple.M2.vcf.gz &
+done
+wait
+
+# =============================================================================
+# 13. Merge Autosomal VCFs
+# =============================================================================
+echo "[$(date)] INFO: Merging autosomal VCFs"
+
+# Merge SNPs
 bcftools concat \
-1.snps.filtered.simple.M2.vcf.gz \
-2.snps.filtered.simple.M2.vcf.gz \
-3.snps.filtered.simple.M2.vcf.gz \
-4.snps.filtered.simple.M2.vcf.gz \
-5.snps.filtered.simple.M2.vcf.gz \
-6.snps.filtered.simple.M2.vcf.gz \
-7.snps.filtered.simple.M2.vcf.gz \
-8.snps.filtered.simple.M2.vcf.gz \
-9.snps.filtered.simple.M2.vcf.gz \
-10.snps.filtered.simple.M2.vcf.gz \
-11.snps.filtered.simple.M2.vcf.gz \
-12.snps.filtered.simple.M2.vcf.gz \
-13.snps.filtered.simple.M2.vcf.gz \
-14.snps.filtered.simple.M2.vcf.gz \
-15.snps.filtered.simple.M2.vcf.gz \
-16.snps.filtered.simple.M2.vcf.gz \
-17.snps.filtered.simple.M2.vcf.gz \
-18.snps.filtered.simple.M2.vcf.gz -Oz -o Pig.snps.filtered.simple.M2.vcf.gz
+    $(for chr in {1..18}; do echo "${chr}.snps.filtered.simple.M2.vcf.gz"; done) \
+    -Oz -o Pig.snps.filtered.simple.M2.vcf.gz
+
+# Merge INDELs
 bcftools concat \
-1.indels.filtered.simple.M2.vcf.gz \
-2.indels.filtered.simple.M2.vcf.gz \
-3.indels.filtered.simple.M2.vcf.gz \
-4.indels.filtered.simple.M2.vcf.gz \
-5.indels.filtered.simple.M2.vcf.gz \
-6.indels.filtered.simple.M2.vcf.gz \
-7.indels.filtered.simple.M2.vcf.gz \
-8.indels.filtered.simple.M2.vcf.gz \
-9.indels.filtered.simple.M2.vcf.gz \
-10.indels.filtered.simple.M2.vcf.gz \
-11.indels.filtered.simple.M2.vcf.gz \
-12.indels.filtered.simple.M2.vcf.gz \
-13.indels.filtered.simple.M2.vcf.gz \
-14.indels.filtered.simple.M2.vcf.gz \
-15.indels.filtered.simple.M2.vcf.gz \
-16.indels.filtered.simple.M2.vcf.gz \
-17.indels.filtered.simple.M2.vcf.gz \
-18.indels.filtered.simple.M2.vcf.gz -Oz -o Pig.indels.filtered.simple.M2.vcf.gz
+    $(for chr in {1..18}; do echo "${chr}.indels.filtered.simple.M2.vcf.gz"; done) \
+    -Oz -o Pig.indels.filtered.simple.M2.vcf.gz
+
+# =============================================================================
+# 14. Completion Summary
+# =============================================================================
+echo "-----------------------------------------------------------------------"
+echo "NGS Processing Pipeline Completed Successfully!"
+echo "Timestamp: $(date)"
+echo ""
+echo "Final output files:"
+echo "  - Pig.snps.filtered.simple.M2.vcf.gz   (Autosomal SNPs)"
+echo "  - Pig.indels.filtered.simple.M2.vcf.gz (Autosomal INDELs)"
+echo "  - X.snps.filtered.simple.M2.vcf.gz     (X chromosome SNPs)"
+echo "  - X.indels.filtered.simple.M2.vcf.gz   (X chromosome INDELs)"
+echo ""
+echo "Individual chromosome files saved in current directory"
+echo "-----------------------------------------------------------------------"
