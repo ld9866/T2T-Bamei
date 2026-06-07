@@ -1,5 +1,105 @@
-# Transanno
-minimap2 -cx asm5 -t 8 --cs tabasco.t2t.fa Sus_scrofa.Sscrofa11.1.dna.toplevel.fa > PAF_FILE.paf
+#!/bin/bash
+
+###############################################################################
+# Gene Annotation Lift-Over Pipeline (TransAnno)
+#
+# Project: Bamei Pangenome Analysis
+# Author: Lidong
+# Date: 2026-06-07
+# Version: 1.0
+#
+# Description:
+#   This pipeline lifts gene annotations from a reference genome (Sscrofa11.1)
+#   to a target genome (tabasco.t2t) using Minimap2 alignment and TransAnno.
+#
+# Dependencies:
+#   - minimap2
+#   - TransAnno (conda environment)
+###############################################################################
+
+# =============================================================================
+# 1. Configurations
+# =============================================================================
+# Input files
+TARGET_GENOME="bamei.t2t.fa"
+REF_GENOME="Sus_scrofa.Sscrofa11.1.dna.toplevel.fa"
+REF_ANNO="Sus_scrofa.Sscrofa11.1.114.gff3"
+
+# Output files
+PAF_FILE="PAF_FILE.paf"
+CHAIN_FILE="CHAINFILE.chain"
+FAILED_GTF="FAILED.gtf.gz"
+SUCCEEDED_GTF="SUCCEEDED.gtf.gz"
+
+# Resources
+THREADS=8
+
+# =============================================================================
+# 2. Run Minimap2 (Generate PAF alignment)
+# =============================================================================
+echo "[$(date)] INFO: Running Minimap2 to align genomes..."
+
+minimap2 -cx asm5 -t ${THREADS} --cs ${TARGET_GENOME} ${REF_GENOME} > ${PAF_FILE}
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Minimap2 alignment failed!"
+    exit 1
+fi
+
+echo "[$(date)] INFO: PAF file generated: ${PAF_FILE}"
+
+# =============================================================================
+# 3. Activate TransAnno and Convert PAF to Chain
+# =============================================================================
+echo "[$(date)] INFO: Activating TransAnno environment..."
+
 conda activate transanno
-transanno minimap2chain PAF_FILE.paf --output CHAINFILE.chain
-transanno liftgene Sus_scrofa.Sscrofa11.1.114.gff3 --chain CHAINFILE.chain --failed FAILED.gtf.gz --output SUCCEEDED.gtf.gz
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Failed to activate transanno conda environment"
+    exit 1
+fi
+
+echo "[$(date)] INFO: Converting PAF to chain file..."
+
+transanno minimap2chain ${PAF_FILE} --output ${CHAIN_FILE}
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: PAF to chain conversion failed!"
+    conda deactivate
+    exit 1
+fi
+
+echo "[$(date)] INFO: Chain file generated: ${CHAIN_FILE}"
+
+# =============================================================================
+# 4. Lift Gene Annotations
+# =============================================================================
+echo "[$(date)] INFO: Lifting gene annotations to target genome..."
+
+transanno liftgene ${REF_ANNO} \
+    --chain ${CHAIN_FILE} \
+    --failed ${FAILED_GTF} \
+    --output ${SUCCEEDED_GTF}
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Gene lift-over failed!"
+    conda deactivate
+    exit 1
+fi
+
+# =============================================================================
+# 5. Deactivate Environment & Summary
+# =============================================================================
+conda deactivate
+
+echo "-----------------------------------------------------------------------"
+echo "Gene Annotation Lift-Over Completed Successfully!"
+echo "Timestamp: $(date)"
+echo ""
+echo "Output files:"
+echo "  - ${PAF_FILE}           (Minimap2 alignment)"
+echo "  - ${CHAIN_FILE}         (Chain file for lift-over)"
+echo "  - ${SUCCEEDED_GTF}      (Successfully lifted genes)"
+echo "  - ${FAILED_GTF}         (Failed genes)"
+echo "-----------------------------------------------------------------------"
