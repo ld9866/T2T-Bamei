@@ -1,10 +1,216 @@
-# hifiasm
-hifiasm -o Bamei.hifi.ont.hic -t 256 --h1 Bamei_1.clean.fq.gz --h2 Bamei_2.clean.fq.gz --ul Bamei.ont.fastq.gz Bamei.hifi.fq.gz 2> Bamei.hifi.ont.hic.log
-awk '/^S/{print ">"$2;print $3}' hifiasm.gfa > hifiasm.fa
+#!/bin/bash
 
-# verkko
-verkko -d Bamei.verrkko --hifi Bamei.hifi.fastq.gz --nano Bamei.ont.fastq.gz --hic1 Bamei.HiC_R1.clean.fastq.gz --hic2 Bamei.HiC_R2.clean.fastq.gz --local-memory 600 2>log
+###############################################################################
+# Hybrid Genome Assembly Pipeline (Hifiasm/Verkko/NextDenovo)
+#
+# Project: Tabasco Pangenome Analysis
+# Author: Lidong
+# Date: 2026-06-07
+# Version: 1.0
+#
+# Description:
+#   This script provides three hybrid assembly strategies based on data availability:
+#     1. Hifiasm: PacBio HiFi + ONT + Hi-C (recommended for trio/hybrid)
+#     2. Verkko: PacBio HiFi + ONT + Hi-C (automated telomere-to-telomere)
+#     3. NextDenovo: Nanopore/PacBio CLR only (for low-coverage or legacy data)
+#
+# Dependencies:
+#   - hifiasm, verkko, nextDenovo
+#   - awk, gzip
+###############################################################################
 
-# nextdenovo
+# =============================================================================
+# 1. Global Configurations & Environment
+# =============================================================================
+# Resource Allocation
+HIFIASM_THREADS=256
+VERKKO_MEMORY=600                    # Local memory in GB
+VERKKO_THREADS=32                   # Adjust based on your system
+NEXTDENOVO_THREADS=36
+
+# Input File Names (Modify as needed)
+HIFI_READS="Bamei.hifi.fq.gz"
+ONT_READS="Bamei.ont.fastq.gz"
+HIC_R1="Bamei_1.clean.fq.gz"
+HIC_R2="Bamei_2.clean.fq.gz"
+HIC_R1_VERKKO="Bamei.HiC_R1.clean.fastq.gz"
+HIC_R2_VERKKO="Bamei.HiC_R2.clean.fastq.gz"
+
+# Output Directory Names
+HIFIASM_OUTPUT="Bamei.hifi.ont.hic"
+VERKKO_OUTPUT="Bamei.verkko"
+NEXTDENOVO_OUTPUT="nextdenovo_run"
+
+# =============================================================================
+# 2. Pre-flight Checks
+# =============================================================================
+echo "[$(date)] INFO: Starting Hybrid Genome Assembly Pipeline..."
+
+# Check input files
+if [ ! -f "${HIFI_READS}" ]; then
+    echo "ERROR: HiFi reads file ${HIFI_READS} not found!"
+    exit 1
+fi
+
+# =============================================================================
+# 3. Option 1: Hifiasm Assembly (PacBio HiFi + ONT + Hi-C)
+# =============================================================================
+echo "[$(date)] STAGE 1/3: Running Hifiasm hybrid assembly..."
+
+# Check optional input files
+HIFIASM_CMD="hifiasm -o ${HIFIASM_OUTPUT} -t ${HIFIASM_THREADS}"
+
+if [ -f "${HIC_R1}" ] && [ -f "${HIC_R2}" ]; then
+    echo "[$(date)] INFO: Including Hi-C data (--h1/--h2)"
+    HIFIASM_CMD="${HIFIASM_CMD} --h1 ${HIC_R1} --h2 ${HIC_R2}"
+else
+    echo "[$(date)] WARNING: Hi-C files not found, proceeding without Hi-C data"
+fi
+
+if [ -f "${ONT_READS}" ]; then
+    echo "[$(date)] INFO: Including ONT ultra-long reads (--ul)"
+    HIFIASM_CMD="${HIFIASM_CMD} --ul ${ONT_READS}"
+else
+    echo "[$(date)] WARNING: ONT reads not found, proceeding without ONT data"
+fi
+
+HIFIASM_CMD="${HIFIASM_CMD} ${HIFI_READS} 2> ${HIFIASM_OUTPUT}.log"
+
+eval ${HIFIASM_CMD}
+
+if [ $? -eq 0 ]; then
+    echo "[$(date)] INFO: Hifiasm assembly completed successfully"
+    echo "[$(date)] INFO: Converting GFA to FASTA format..."
+    
+    # The primary assembly is typically in .gfa file
+    GFA_FILE="${HIFIASM_OUTPUT}.gfa"
+    if [ ! -f "${GFA_FILE}" ]; then
+        GFA_FILE="${HIFIASM_OUTPUT}.bp.p_ctg.gfa"  # Alternative naming
+    fi
+    
+    if [ -f "${GFA_FILE}" ]; then
+        awk '/^S/{print ">"$2;print $3}' ${GFA_FILE} > hifiasm_assembly.fa
+        echo "[$(date)] INFO: FASTA output saved to hifiasm_assembly.fa"
+    else
+        echo "WARNING: GFA file not found at expected location"
+    fi
+else
+    echo "ERROR: Hifiasm assembly failed! Check ${HIFIASM_OUTPUT}.log"
+    exit 1
+fi
+
+# =============================================================================
+# 4. Option 2: Verkko Assembly (T2T-capable hybrid assembler)
+# =============================================================================
+echo "[$(date)] STAGE 2/3: Running Verkko hybrid assembly..."
+
+VERKKO_CMD="verkko -d ${VERKKO_OUTPUT}"
+
+# Build command based on available data
+if [ -f "${HIFI_READS}" ]; then
+    VERKKO_CMD="${VERKKO_CMD} --hifi ${HIFI_READS}"
+fi
+
+if [ -f "${ONT_READS}" ]; then
+    VERKKO_CMD="${VERKKO_CMD} --nano ${ONT_READS}"
+fi
+
+if [ -f "${HIC_R1_VERKKO}" ] && [ -f "${HIC_R2_VERKKO}" ]; then
+    VERKKO_CMD="${VERKKO_CMD} --hic1 ${HIC_R1_VERKKO} --hic2 ${HIC_R2_VERKKO}"
+fi
+
+VERKKO_CMD="${VERKKO_CMD} --local-memory ${VERKKO_MEMORY} 2> ${VERKKO_OUTPUT}.log"
+
+eval ${VERKKO_CMD}
+
+if [ $? -eq 0 ]; then
+    echo "[$(date)] INFO: Verkko assembly completed successfully"
+    echo "[$(date)] INFO: Final assembly located in ${VERKKO_OUTPUT}/assembly.fasta"
+else
+    echo "ERROR: Verkko assembly failed! Check ${VERKKO_OUTPUT}.log"
+    exit 1
+fi
+
+# =============================================================================
+# 5. Option 3: NextDenovo Assembly (ONT/CLR only)
+# =============================================================================
+echo "[$(date)] STAGE 3/3: Running NextDenovo assembly..."
+
+if [ ! -f "run.cfg" ]; then
+    echo "ERROR: NextDenovo configuration file 'run.cfg' not found!"
+    echo "Please create run.cfg based on the template below:"
+    cat << 'EOF'
+
+[General]
+job_type = local
+job_prefix = nextDenovo
+task = all
+rewrite = yes
+deltmp = yes
+rerun = 3
+parallel_jobs = 6
+input_type = raw
+read_type = ont          # ont for Nanopore, clr for PacBio CLR
+input_fofn = ./input.fofn
+workdir = ./01_rundir
+
+[correct_option]
+read_cutoff = 20k
+genome_size = 2.6g
+pa_correction = 5
+sort_options = -m 150g -t 30
+minimap2_options_raw = -t 36
+correction_options = -p 30
+
+[assemble_option]
+minimap2_options_cns = -t 36
+nextgraph_options = -a 1
+EOF
+    exit 1
+fi
+
 nextDenovo run.cfg
 
+if [ $? -eq 0 ]; then
+    echo "[$(date)] INFO: NextDenovo assembly completed successfully"
+else
+    echo "ERROR: NextDenovo assembly failed! Check run.cfg and logs"
+    exit 1
+fi
+
+# =============================================================================
+# 6. Pipeline Completion & Summary
+# =============================================================================
+echo "-----------------------------------------------------------------------"
+echo "Hybrid Genome Assembly Pipeline Completed Successfully!"
+echo "Timestamp: $(date)"
+echo ""
+echo "Output Summary:"
+echo "  - Hifiasm assembly:   ${HIFIASM_OUTPUT}/, hifiasm_assembly.fa"
+echo "  - Verkko assembly:    ${VERKKO_OUTPUT}/assembly.fasta"
+echo "  - NextDenovo:         ./01_rundir/ (check output)"
+echo ""
+echo "Assembly Logs:"
+echo "  - ${HIFIASM_OUTPUT}.log"
+echo "  - ${VERKKO_OUTPUT}.log"
+echo "-----------------------------------------------------------------------"
+
+# =============================================================================
+# 7. Optional: Quality Assessment Commands (commented out)
+# =============================================================================
+cat << 'EOF'
+
+-----------------------------------------------------------------------
+Post-Assembly Quality Assessment (Recommended):
+-----------------------------------------------------------------------
+# 1. Basic statistics with seqkit
+seqkit stats hifiasm_assembly.fa
+
+# 2. BUSCO completeness
+busco -i hifiasm_assembly.fa -l mammalia_odb10 -m genome -o busco_hifiasm
+
+# 3. Check assembly continuity
+grep -c "^>" hifiasm_assembly.fa  # Number of contigs
+awk '/^>/{flag=1;next}/^[^>]/{if(flag){print length;flag=0}}' hifiasm_assembly.fa | sort -rn | head -10
+-----------------------------------------------------------------------
+EOF
