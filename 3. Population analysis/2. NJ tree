@@ -1,15 +1,158 @@
-# Convert vcf files to plink format
-plink --vcf Pig.snps.filtered.simple.M2.vcf.gz --make-bed --out 1486.snp
+#!/bin/bash
 
-# Quality control
-plink --bfile 1486.snp --geno 0.01 --maf 0.1 --make-bed --out 1486.snp.qc
-plink --bfile 1486.snp.qc --indep-pairwise 1000 1000 0.8 --out 1486.snp.qc.ld
-plink --bfile 1486.snp.qc --extract 1486.snp.qc.d.prune.in --make-bed --out 1486.snp.qc.ld
-plink --bfile 1486.snp.qc.ld --chr-set 18 --distance-matrix --out 1486.snp.qc.ld
+###############################################################################
+# VCF to PLINK Conversion & Quality Control Pipeline
+#
+# Project: Tabasco Pangenome Analysis
+# Author: Lidong
+# Date: 2026-06-07
+# Version: 1.0
+#
+# Description:
+#   This pipeline converts VCF files to PLINK format, performs QC filtering,
+#   LD pruning, generates distance matrices, and prepares MEGA format files
+#   for phylogenetic tree visualization in iTOL.
+###############################################################################
 
-# Obtain Mega Files
-perl -e 'while(<>){chomp; @F = split/\s+/; $i++; print "[$i]#$F[1]\n"}' 1486.snp.qc.ld.mdist.id > 1486.snp.qc.ld.mega
-perl -e 'print "[ "; while(<>){chomp; @F = split/\s+/; $i++; print "$i "} print "]\n" ' 1486.snp.qc.ld.mdist.id >> 1486.snp.qc.ld.mega
-perl -e 'while(<>){chomp;my @F = split/\s+/; $i++; print "[$i]"; foreach (0..$i-2){print " $F[$_]"} print "\n"}' 1486.snp.qc.ld.mdist >> 1486.snp.qc.ld.mega
+# =============================================================================
+# 1. Configurations
+# =============================================================================
+VCF_INPUT="Pig.snps.filtered.simple.M2.vcf.gz"
+PREFIX="1486"
+CHROMOSOME_COUNT=18
 
-# Visualize on iTOL website （https://itol.embl.de/）
+# QC thresholds
+GENO_THRESHOLD=0.01    # Missing genotype rate
+MAF_THRESHOLD=0.1      # Minor allele frequency
+
+# LD pruning parameters
+LD_WINDOW=1000
+LD_STEP=1000
+LD_R2=0.8
+
+# =============================================================================
+# 2. Convert VCF to PLINK Binary Format
+# =============================================================================
+echo "[$(date)] INFO: Converting VCF to PLINK format..."
+
+plink --vcf ${VCF_INPUT} --make-bed --out ${PREFIX}.snp
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: VCF to PLINK conversion failed!"
+    exit 1
+fi
+
+# =============================================================================
+# 3. Quality Control Filtering
+# =============================================================================
+echo "[$(date)] INFO: Applying QC filters (geno ${GENO_THRESHOLD}, maf ${MAF_THRESHOLD})..."
+
+plink --bfile ${PREFIX}.snp \
+    --geno ${GENO_THRESHOLD} \
+    --maf ${MAF_THRESHOLD} \
+    --make-bed \
+    --out ${PREFIX}.snp.qc
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: QC filtering failed!"
+    exit 1
+fi
+
+# =============================================================================
+# 4. LD Pruning
+# =============================================================================
+echo "[$(date)] INFO: Performing LD pruning (window ${LD_WINDOW}, step ${LD_STEP}, r2 ${LD_R2})..."
+
+plink --bfile ${PREFIX}.snp.qc \
+    --indep-pairwise ${LD_WINDOW} ${LD_STEP} ${LD_R2} \
+    --out ${PREFIX}.snp.qc.ld
+
+plink --bfile ${PREFIX}.snp.qc \
+    --extract ${PREFIX}.snp.qc.ld.prune.in \
+    --make-bed \
+    --out ${PREFIX}.snp.qc.ld
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: LD pruning failed!"
+    exit 1
+fi
+
+# =============================================================================
+# 5. Generate Distance Matrix
+# =============================================================================
+echo "[$(date)] INFO: Generating distance matrix..."
+
+plink --bfile ${PREFIX}.snp.qc.ld \
+    --chr-set ${CHROMOSOME_COUNT} \
+    --distance-matrix \
+    --out ${PREFIX}.snp.qc.ld
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Distance matrix generation failed!"
+    exit 1
+fi
+
+# =============================================================================
+# 6. Convert to MEGA Format for iTOL
+# =============================================================================
+echo "[$(date)] INFO: Converting to MEGA format for iTOL..."
+
+# Generate sample labels
+perl -e '
+while(<>){
+    chomp; 
+    @F = split/\s+/; 
+    $i++; 
+    print "[$i]#$F[1]\n"
+}' ${PREFIX}.snp.qc.ld.mdist.id > ${PREFIX}.snp.qc.ld.mega
+
+# Generate header with sample indices
+perl -e '
+print "[ ";
+while(<>){
+    chomp; 
+    @F = split/\s+/; 
+    $i++; 
+    print "$i "
+} 
+print "]\n"
+' ${PREFIX}.snp.qc.ld.mdist.id >> ${PREFIX}.snp.qc.ld.mega
+
+# Generate distance matrix
+perl -e '
+while(<>){
+    chomp;
+    my @F = split/\s+/;
+    $i++;
+    print "[$i]";
+    foreach (0..$i-2){
+        print " $F[$_]"
+    }
+    print "\n"
+}' ${PREFIX}.snp.qc.ld.mdist >> ${PREFIX}.snp.qc.ld.mega
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: MEGA format conversion failed!"
+    exit 1
+fi
+
+# =============================================================================
+# 7. Completion Summary
+# =============================================================================
+echo "-----------------------------------------------------------------------"
+echo "PLINK Processing Pipeline Completed Successfully!"
+echo "Timestamp: $(date)"
+echo ""
+echo "Output files:"
+echo "  - ${PREFIX}.snp.bed/bim/fam           (PLINK binary files)"
+echo "  - ${PREFIX}.snp.qc.bed/bim/fam        (QC filtered)"
+echo "  - ${PREFIX}.snp.qc.ld.bed/bim/fam     (LD pruned)"
+echo "  - ${PREFIX}.snp.qc.ld.mdist           (Distance matrix)"
+echo "  - ${PREFIX}.snp.qc.ld.mdist.id        (Sample IDs)"
+echo "  - ${PREFIX}.snp.qc.ld.mega            (MEGA format for iTOL)"
+echo ""
+echo "Visualization:"
+echo "  1. Open https://itol.embl.de/"
+echo "  2. Upload ${PREFIX}.snp.qc.ld.mega"
+echo "  3. Customize tree appearance"
+echo "-----------------------------------------------------------------------"
