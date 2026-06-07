@@ -1,21 +1,193 @@
-# Admixture for all sample
-for i in {2..10};
-do
-admixture -j10 --cv 1485.snp.qc.ld.bed ${i} | tee log${i}.out & 
+#!/bin/bash
+
+###############################################################################
+# ADMIXTURE Analysis Pipeline (Population Structure Inference)
+#
+# Project: Bamei Pangenome Analysis
+# Author: Lidong
+# Date: 2026-06-07
+# Version: 1.0
+#
+# Description:
+#   This pipeline runs ADMIXTURE to infer population structure at multiple
+#   hierarchical levels: all samples, wild samples, and European wild samples.
+#   Cross-validation (CV) errors are calculated to determine optimal K values.
+#
+# Dependencies:
+#   - ADMIXTURE (https://dalexander.github.io/admixture/)
+#   - PLINK 1.9
+###############################################################################
+
+# =============================================================================
+# 1. Configurations
+# =============================================================================
+# Base dataset
+BASE_PREFIX="1485.snp.qc.ld"
+
+# Subset datasets
+WILD_PREFIX="116.wild"
+EW_PREFIX="38.EW"
+
+# Keep lists (sample IDs, one per line)
+ALL_KEEP_LIST="keep.list"          # For wild samples
+WILD_KEEP_LIST="keep.list"         # For European wild samples (adjust as needed)
+
+# ADMIXTURE parameters
+THREADS=10
+K_RANGE_START=2
+K_RANGE_END=10
+
+# =============================================================================
+# 2. Pre-flight Checks
+# =============================================================================
+echo "[$(date)] INFO: Starting ADMIXTURE population structure analysis..."
+
+# Check if ADMIXTURE is available
+if ! command -v admixture &> /dev/null; then
+    echo "ERROR: ADMIXTURE not found in PATH!"
+    exit 1
+fi
+
+# =============================================================================
+# 3. ADMIXTURE for All Samples
+# =============================================================================
+echo "[$(date)] INFO: Running ADMIXTURE for ALL samples (K=${K_RANGE_START}-${K_RANGE_END})..."
+
+if [ ! -f "${BASE_PREFIX}.bed" ]; then
+    echo "ERROR: Base PLINK file ${BASE_PREFIX}.bed not found!"
+    exit 1
+fi
+
+for k in $(seq ${K_RANGE_START} ${K_RANGE_END}); do
+    echo "[$(date)] INFO: Running ADMIXTURE with K=${k} (all samples)"
+    admixture -j${THREADS} --cv ${BASE_PREFIX}.bed ${k} | tee log_all.k${k}.out &
+done
+wait
+
+echo "[$(date)] INFO: ADMIXTURE for all samples completed"
+
+# =============================================================================
+# 4. Extract Wild Samples Subset
+# =============================================================================
+echo "[$(date)] INFO: Extracting wild samples subset..."
+
+if [ ! -f "${ALL_KEEP_LIST}" ]; then
+    echo "ERROR: Keep list ${ALL_KEEP_LIST} not found!"
+    exit 1
+fi
+
+plink --bfile ${BASE_PREFIX} \
+    --keep ${ALL_KEEP_LIST} \
+    --make-bed \
+    --out ${WILD_PREFIX}
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Failed to extract wild samples!"
+    exit 1
+fi
+
+# =============================================================================
+# 5. ADMIXTURE for Wild Samples
+# =============================================================================
+echo "[$(date)] INFO: Running ADMIXTURE for WILD samples (K=${K_RANGE_START}-${K_RANGE_END})..."
+
+for k in $(seq ${K_RANGE_START} ${K_RANGE_END}); do
+    echo "[$(date)] INFO: Running ADMIXTURE with K=${k} (wild samples)"
+    admixture -j${THREADS} --cv ${WILD_PREFIX}.bed ${k} | tee log_wild.k${k}.out &
+done
+wait
+
+echo "[$(date)] INFO: ADMIXTURE for wild samples completed"
+
+# =============================================================================
+# 6. Extract European Wild Samples Subset
+# =============================================================================
+echo "[$(date)] INFO: Extracting European wild samples subset..."
+
+if [ ! -f "${WILD_KEEP_LIST}" ]; then
+    echo "WARNING: Keep list ${WILD_KEEP_LIST} not found! Skipping European wild subset."
+    SKIP_EW=1
+else
+    plink --bfile ${WILD_PREFIX} \
+        --keep ${WILD_KEEP_LIST} \
+        --make-bed \
+        --out ${EW_PREFIX}
+
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to extract European wild samples!"
+        exit 1
+    fi
+
+    # =========================================================================
+    # 7. ADMIXTURE for European Wild Samples
+    # =========================================================================
+    echo "[$(date)] INFO: Running ADMIXTURE for EUROPEAN WILD samples (K=${K_RANGE_START}-${K_RANGE_END})..."
+
+    for k in $(seq ${K_RANGE_START} ${K_RANGE_END}); do
+        echo "[$(date)] INFO: Running ADMIXTURE with K=${k} (European wild samples)"
+        admixture -j${THREADS} --cv ${EW_PREFIX}.bed ${k} | tee log_ew.k${k}.out &
+    done
+    wait
+
+    echo "[$(date)] INFO: ADMIXTURE for European wild samples completed"
+fi
+
+# =============================================================================
+# 8. Extract CV Errors for Optimal K Selection
+# =============================================================================
+echo "[$(date)] INFO: Extracting cross-validation errors..."
+
+# All samples
+echo "=== CV Errors (All Samples) ==="
+for k in $(seq ${K_RANGE_START} ${K_RANGE_END}); do
+    if [ -f "log_all.k${k}.out" ]; then
+        cv=$(grep -i "CV" log_all.k${k}.out | awk '{print $NF}')
+        echo "K=${k}: ${cv}"
+    fi
 done
 
-# Admixture for wild sample
-plink --bfile 1485.snp.qc.ld --keep keep.list --make-beed --out 116.wild
-
-for i in {2..10};
-do
-admixture -j10 --cv 116.wild.bed ${i} | tee log${i}.out & 
+# Wild samples
+echo ""
+echo "=== CV Errors (Wild Samples) ==="
+for k in $(seq ${K_RANGE_START} ${K_RANGE_END}); do
+    if [ -f "log_wild.k${k}.out" ]; then
+        cv=$(grep -i "CV" log_wild.k${k}.out | awk '{print $NF}')
+        echo "K=${k}: ${cv}"
+    fi
 done
 
-# Admixture for European wild sample
-plink --bfile 116.wild --keep keep.list --make-beed --out 38.EW
+# European wild samples (if available)
+if [ -z "${SKIP_EW}" ]; then
+    echo ""
+    echo "=== CV Errors (European Wild Samples) ==="
+    for k in $(seq ${K_RANGE_START} ${K_RANGE_END}); do
+        if [ -f "log_ew.k${k}.out" ]; then
+            cv=$(grep -i "CV" log_ew.k${k}.out | awk '{print $NF}')
+            echo "K=${k}: ${cv}"
+        fi
+    done
+fi
 
-for i in {2..10};
-do
-admixture -j10 --cv 38.EW.bed ${i} | tee log${i}.out & 
-done
+# =============================================================================
+# 9. Completion Summary
+# =============================================================================
+echo "-----------------------------------------------------------------------"
+echo "ADMIXTURE Analysis Completed Successfully!"
+echo "Timestamp: $(date)"
+echo ""
+echo "Output files:"
+echo "  - All samples:       ${BASE_PREFIX}.${k}.Q (k=2-10), log_all.k*.out"
+echo "  - Wild samples:      ${WILD_PREFIX}.${k}.Q (k=2-10), log_wild.k*.out"
+if [ -z "${SKIP_EW}" ]; then
+    echo "  - European wild:     ${EW_PREFIX}.${k}.Q (k=2-10), log_ew.k*.out"
+fi
+echo ""
+echo "Optimal K selection:"
+echo "  - Lower CV error indicates better K"
+echo "  - Choose K at the 'elbow' of CV error curve"
+echo ""
+echo "Next steps:"
+echo "  1. Plot CV errors vs K to select optimal K"
+echo "  2. Visualize ancestry proportions (Q matrices) using bar plots"
+echo "  3. Compare population structure across hierarchical levels"
+echo "-----------------------------------------------------------------------"
