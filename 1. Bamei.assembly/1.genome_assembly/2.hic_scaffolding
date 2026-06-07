@@ -1,17 +1,105 @@
-# Hi-C
-# prepare
-python /home/lidong/Software/juicer-1.6/misc/generate_site_positions.py MboI draft.genome Bamei.fasta
-awk 'BEGIN{OFS="\t"}{print $1, $NF}' draft.genome_MboI.txt > draft.genome.chrom.sizes
-# jucier
-/home/lidong/Software/juicer-1.6/CPU/juicer.sh -g Bamei \
--s MboI \
--D /home/lidong/Software/juicer-1.6 -z /ref/Bamei.fasta \
--y /ref/draft.genome_MboI.txt \
--p /ref/draft.genome.chrom.sizes \
--t 128 &>juicer.log
+#!/bin/bash
 
-# 3DDNA-human-correct
-awk -f /home/lidong/Software/3d-dna-201008/utils/wrap-fasta-sequence.awk Bamei.fa > Bamei.wrapped.fa
-/home/lidong/Software/3d-dna-201008/run-asm-pipeline.sh -r 0 Bamei.wrapped.fa merged_nodups.txt
-# human check
-/home/lidong/Software/3d-dna-201008/run-asm-pipeline-post-review.sh -r Bamei.wrapped.assembly Bamei.wrapped.fa merged_nodups.txt 
+###############################################################################
+# Hi-C Assisted Chromosome Assembly Pipeline (Juicer + 3D-DNA)
+#
+# Project: Tabasco Pangenome Analysis
+# Author: Lidong
+# Date: 2026-06-07
+# Version: 1.0
+#
+# Description:
+#   This pipeline performs chromosome-level scaffolding using Hi-C data.
+#   Steps include: restriction site preparation, Juicer alignment/filtering,
+#   and 3D-DNA assembly and review.
+#
+# Dependencies:
+#   - Juicer (https://github.com/aidenlab/juicer)
+#   - 3D-DNA (https://github.com/aidenlab/3d-dna)
+###############################################################################
+
+# =============================================================================
+# 1. Global Configurations
+# =============================================================================
+# Software paths
+JUICE_SCRIPTS="/home/lidong/Software/juicer-1.6"
+THREEDNA_SCRIPT="/home/lidong/Software/3d-dna-201008"
+
+# Input files
+REF_FASTA="Bamei.fasta"
+REF_FASTA_3D="Bamei.fa"          # 3D-DNA uses .fa extension
+SAMPLE_NAME="Bamei"
+
+# Restriction enzyme
+ENZYME="MboI"
+
+# Resource
+THREADS=128
+
+# =============================================================================
+# 2. Prepare Restriction Site File
+# =============================================================================
+echo "[$(date)] INFO: Generating restriction site positions for ${ENZYME}..."
+
+python ${JUICE_SCRIPTS}/misc/generate_site_positions.py ${ENZYME} draft.genome ${REF_FASTA}
+awk 'BEGIN{OFS="\t"}{print $1, $NF}' draft.genome_${ENZYME}.txt > draft.genome.chrom.sizes
+
+# =============================================================================
+# 3. Run Juicer (Alignment, filtering, and normalization)
+# =============================================================================
+echo "[$(date)] INFO: Running Juicer Hi-C processing pipeline..."
+
+${JUICE_SCRIPTS}/CPU/juicer.sh \
+    -g ${SAMPLE_NAME} \
+    -s ${ENZYME} \
+    -D ${JUICE_SCRIPTS} \
+    -z /ref/${REF_FASTA} \
+    -y /ref/draft.genome_${ENZYME}.txt \
+    -p /ref/draft.genome.chrom.sizes \
+    -t ${THREADS} &> juicer.log
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Juicer pipeline failed! Check juicer.log"
+    exit 1
+fi
+
+# =============================================================================
+# 4. Run 3D-DNA (Human-correct mode for chromosome scaffolding)
+# =============================================================================
+echo "[$(date)] INFO: Running 3D-DNA scaffolding pipeline..."
+
+# Wrap FASTA sequences (ensure line length consistency)
+awk -f ${THREEDNA_SCRIPT}/utils/wrap-fasta-sequence.awk ${REF_FASTA_3D} > ${SAMPLE_NAME}.wrapped.fa
+
+# Run assembly pipeline
+${THREEDNA_SCRIPT}/run-asm-pipeline.sh -r 0 ${SAMPLE_NAME}.wrapped.fa merged_nodups.txt
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: 3D-DNA pipeline failed!"
+    exit 1
+fi
+
+# =============================================================================
+# 5. Post-Review (Interactive review of potential mis-joins)
+# =============================================================================
+echo "[$(date)] INFO: Running 3D-DNA post-review..."
+
+${THREEDNA_SCRIPT}/run-asm-pipeline-post-review.sh \
+    -r ${SAMPLE_NAME}.wrapped.assembly \
+    ${SAMPLE_NAME}.wrapped.fa \
+    merged_nodups.txt
+
+# =============================================================================
+# 6. Completion Summary
+# =============================================================================
+echo "-----------------------------------------------------------------------"
+echo "Hi-C Assisted Assembly Completed Successfully!"
+echo "Timestamp: $(date)"
+echo ""
+echo "Key output files:"
+echo "  - ${SAMPLE_NAME}.wrapped.assembly  (Final scaffold assembly)"
+echo "  - juicer.log                        (Juicer run log)"
+echo "  - merged_nodups.txt                 (Juicer processed Hi-C pairs)"
+echo ""
+echo "Next step: Review the .assembly file in Juicebox for manual curation"
+echo "-----------------------------------------------------------------------"
