@@ -1,27 +1,93 @@
-#For Pacbio HIFI data, we use hifiasm for assembly
+#!/bin/bash
 
-hifiasm -o genome.hifi -t 256 genome.hifi.fq.gz 2> genome.hifi.log
-awk '/^S/{print ">"$2;print $3}' hifiasm.gfa > hifiasm.fa
+###############################################################################
+# Genome Assembly & Polishing Pipeline (Hifiasm/NextDenovo + Hi-C/RagTag + NextPolish)
+#
+# Project: Tabasco Pangenome Analysis
+# Author: Lidong
+# Date: 2026-06-07
+# Version: 1.0
+#
+# Description:
+#   This pipeline covers multiple assembly strategies based on data type:
+#     1. PacBio HiFi data -> Hifiasm assembly
+#     2. Nanopore / PacBio CLR data -> NextDenovo assembly
+#     3. Hi-C data -> Chromosome-level scaffolding (Juicer + 3D-DNA)
+#     4. No Hi-C data -> Pseudo-chromosome scaffolding (RagTag)
+#     5. Second-generation resequencing -> NextPolish polishing
+#
+# Dependencies:
+#   - hifiasm, nextDenovo, juicer, 3d-dna, RagTag, NextPolish
+###############################################################################
 
+# =============================================================================
+# 1. Global Configurations & Environment
+# =============================================================================
+# Resource Allocation
+THREADS_HIFI=256
+THREADS_NEXTDENOVO=36
+THREADS_JUICER=128
+THREADS_RAGTAG=10
+THREADS_NEXTPOLISH=64
 
-#For Nanopore and Pacbio clr data, we use nextdenovo for assembly
+# Memory Settings
+SORT_MEMORY="150g"
+NEXTGRAPH_MEMORY="150g"
 
-# nextdenovo
+# Genome Size (for NextDenovo)
+GENOME_SIZE="2.6g"
+
+# =============================================================================
+# 2. PacBio HiFi Assembly (Hifiasm)
+# =============================================================================
+echo "[$(date)] INFO: Starting PacBio HiFi assembly with Hifiasm..."
+
+hifiasm -o genome.hifi -t ${THREADS_HIFI} genome.hifi.fq.gz 2> genome.hifi.log
+
+if [ $? -eq 0 ]; then
+    echo "[$(date)] INFO: Hifiasm assembly completed successfully"
+    echo "[$(date)] INFO: Converting GFA to FASTA format..."
+    awk '/^S/{print ">"$2;print $3}' hifiasm.gfa > hifiasm.fa
+else
+    echo "ERROR: Hifiasm assembly failed! Check genome.hifi.log"
+    exit 1
+fi
+
+# =============================================================================
+# 3. Nanopore / PacBio CLR Assembly (NextDenovo)
+# =============================================================================
+echo "[$(date)] INFO: Starting NextDenovo assembly for Nanopore/CLR data..."
+
+# Check if run.cfg exists
+if [ ! -f "run.cfg" ]; then
+    echo "ERROR: NextDenovo configuration file 'run.cfg' not found!"
+    exit 1
+fi
+
 nextDenovo run.cfg
 
-## run.cfg 
+if [ $? -ne 0 ]; then
+    echo "ERROR: NextDenovo assembly failed!"
+    exit 1
+fi
 
+echo "[$(date)] INFO: NextDenovo assembly completed successfully"
+
+# -----------------------------------------------------------------------------
+# 3.1 NextDenovo Configuration Template (run.cfg)
+# -----------------------------------------------------------------------------
+cat << 'EOF' > run.cfg.template
 [General]
 job_type = local
 job_prefix = nextDenovo
-task = all # 'all', 'correct', 'assemble'
-rewrite = yes # yes/no
+task = all                         # 'all', 'correct', 'assemble'
+rewrite = yes
 deltmp = yes
 rerun = 3
 parallel_jobs = 6
 input_type = raw
-read_type = ont/clr
-input_fofn = ./input.fofn
+read_type = ont/clr                # ont for Nanopore, clr for PacBio CLR
+input_fofn = ./input.fofn          # File list of input reads
 workdir = ./01_rundir
 
 [correct_option]
@@ -29,45 +95,161 @@ read_cutoff = 20k
 genome_size = 2.6g
 pa_correction = 5
 sort_options = -m 150g -t 30
-minimap2_options_raw =  -t 36
+minimap2_options_raw = -t 36
 correction_options = -p 30
 
 [assemble_option]
-minimap2_options_cns =  -t 36
+minimap2_options_cns = -t 36
 nextgraph_options = -a 1
+EOF
 
+# =============================================================================
+# 4. Hi-C Based Chromosome Assembly (Juicer + 3D-DNA)
+# =============================================================================
+echo "[$(date)] INFO: Starting Hi-C based chromosome assembly..."
 
-#########For genomes with hic, chromosome assembly was performed using juicer and 3ddna
+JUICE_SCRIPTS="/home/lidong/Software/juicer-1.6"
+THREEDNA_SCRIPT="/home/lidong/Software/3d-dna-201008"
 
-# Hi-C
-# prepare
-python /home/lidong/Software/juicer-1.6/misc/generate_site_positions.py MboI draft.genome tabasco.fasta
+# Check if required files exist
+if [ ! -f "tabasco.fasta" ]; then
+    echo "ERROR: Reference FASTA 'tabasco.fasta' not found for Hi-C scaffolding!"
+    exit 1
+fi
+
+# -----------------------------------------------------------------------------
+# 4.1 Prepare Hi-C input files
+# -----------------------------------------------------------------------------
+echo "[$(date)] STAGE 4.1: Generating restriction site positions..."
+
+python ${JUICE_SCRIPTS}/misc/generate_site_positions.py MboI draft.genome tabasco.fasta
+
 awk 'BEGIN{OFS="\t"}{print $1, $NF}' draft.genome_MboI.txt > draft.genome.chrom.sizes
-# jucier
-/home/lidong/Software/juicer-1.6/CPU/juicer.sh -g tabasco \
--s MboI \
--D /home/lidong/Software/juicer-1.6 -z /ref/tabasco.fasta \
--y /ref/draft.genome_MboI.txt \
--p /ref/draft.genome.chrom.sizes \
--t 128 &>juicer.log
 
-# 3DDNA-human-correct
-awk -f /home/lidong/Software/3d-dna-201008/utils/wrap-fasta-sequence.awk tabasco.fa > tabasco.wrapped.fa
-/home/lidong/Software/3d-dna-201008/run-asm-pipeline.sh -r 0 tabasco.wrapped.fa merged_nodups.txt
-# human check
-/home/lidong/Software/3d-dna-201008/run-asm-pipeline-post-review.sh -r tabasco.wrapped.assembly tabasco.wrapped.fa merged_nodups.txt 
+# -----------------------------------------------------------------------------
+# 4.2 Run Juicer
+# -----------------------------------------------------------------------------
+echo "[$(date)] STAGE 4.2: Running Juicer..."
 
+${JUICE_SCRIPTS}/CPU/juicer.sh \
+    -g tabasco \
+    -s MboI \
+    -D ${JUICE_SCRIPTS} \
+    -z /ref/tabasco.fasta \
+    -y /ref/draft.genome_MboI.txt \
+    -p /ref/draft.genome.chrom.sizes \
+    -t ${THREADS_JUICER} &> juicer.log
 
-#########For genomes without hic, pseudochromosome assembly was performed using Ragatag
+if [ $? -ne 0 ]; then
+    echo "ERROR: Juicer run failed! Check juicer.log"
+    exit 1
+fi
+
+# -----------------------------------------------------------------------------
+# 4.3 Run 3D-DNA (human-correct mode)
+# -----------------------------------------------------------------------------
+echo "[$(date)] STAGE 4.3: Running 3D-DNA (human-correct mode)..."
+
+# Wrap FASTA sequences
+awk -f ${THREEDNA_SCRIPT}/utils/wrap-fasta-sequence.awk tabasco.fa > tabasco.wrapped.fa
+
+# Run assembly pipeline
+${THREEDNA_SCRIPT}/run-asm-pipeline.sh -r 0 tabasco.wrapped.fa merged_nodups.txt
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: 3D-DNA pipeline failed!"
+    exit 1
+fi
+
+# -----------------------------------------------------------------------------
+# 4.4 Post-review (manual check recommended)
+# -----------------------------------------------------------------------------
+echo "[$(date)] STAGE 4.4: Running post-review..."
+
+${THREEDNA_SCRIPT}/run-asm-pipeline-post-review.sh \
+    -r tabasco.wrapped.assembly \
+    tabasco.wrapped.fa \
+    merged_nodups.txt
+
+echo "[$(date)] INFO: Hi-C scaffolding completed. Please review the assembly manually."
+
+# =============================================================================
+# 5. Pseudo-chromosome Assembly without Hi-C (RagTag)
+# =============================================================================
+echo "[$(date)] INFO: Starting pseudo-chromosome assembly with RagTag..."
+
+# Activate Conda environment
 conda activate Ragtag
-ragtag.py scaffold GCF_000003025.6_Sscrofa11.1_genomic.fna ragtag_output/ragtag.correct.fasta -o final_result -t 10
 
+if [ $? -ne 0 ]; then
+    echo "ERROR: Failed to activate Ragtag Conda environment"
+    exit 1
+fi
 
+# Check input files
+if [ ! -f "GCF_000003025.6_Sscrofa11.1_genomic.fna" ]; then
+    echo "ERROR: Reference genome 'GCF_000003025.6_Sscrofa11.1_genomic.fna' not found!"
+    exit 1
+fi
 
+if [ ! -f "ragtag_output/ragtag.correct.fasta" ]; then
+    echo "ERROR: Input assembly 'ragtag_output/ragtag.correct.fasta' not found!"
+    exit 1
+fi
 
-######For individuals with second-generation resequencing, we used Nextpolish for polishing
+ragtag.py scaffold \
+    GCF_000003025.6_Sscrofa11.1_genomic.fna \
+    ragtag_output/ragtag.correct.fasta \
+    -o final_result \
+    -t ${THREADS_RAGTAG}
 
-/home/lidong/Software/NextPolish/lib/nextpolish1.py -g raw.fasta -t 1 -p 64 -s raw.bam > nextpolish1.fasta
+if [ $? -ne 0 ]; then
+    echo "ERROR: RagTag scaffolding failed!"
+    exit 1
+fi
 
+conda deactivate
+echo "[$(date)] INFO: RagTag scaffolding completed successfully"
 
+# =============================================================================
+# 6. Second-Generation Resequencing Polishing (NextPolish)
+# =============================================================================
+echo "[$(date)] INFO: Starting NextPolish polishing..."
 
+if [ ! -f "raw.fasta" ]; then
+    echo "ERROR: Input FASTA 'raw.fasta' not found for NextPolish!"
+    exit 1
+fi
+
+if [ ! -f "raw.bam" ]; then
+    echo "ERROR: Input BAM 'raw.bam' not found for NextPolish!"
+    exit 1
+fi
+
+python /home/lidong/Software/NextPolish/lib/nextpolish1.py \
+    -g raw.fasta \
+    -t 1 \
+    -p ${THREADS_NEXTPOLISH} \
+    -s raw.bam > nextpolish1.fasta
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: NextPolish polishing failed!"
+    exit 1
+fi
+
+echo "[$(date)] INFO: NextPolish polishing completed successfully"
+
+# =============================================================================
+# 7. Pipeline Completion & Summary
+# =============================================================================
+echo "-----------------------------------------------------------------------"
+echo "Genome Assembly & Polishing Pipeline Completed!"
+echo "Timestamp: $(date)"
+echo ""
+echo "Output Files Summary:"
+echo "  - PacBio HiFi:       hifiasm.fa"
+echo "  - NextDenovo:        ./01_rundir/ (check output)"
+echo "  - Hi-C Scaffolding:  tabasco.wrapped.assembly, juicer.log"
+echo "  - RagTag Scaffolding: final_result/"
+echo "  - NextPolish:        nextpolish1.fasta"
+echo "-----------------------------------------------------------------------"
