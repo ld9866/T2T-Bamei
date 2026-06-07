@@ -1,21 +1,50 @@
-# Intall sift
+#!/bin/bash
+
+###############################################################################
+# SIFT4G Pipeline (Installation & Annotation)
+#
+# Project: Bamei Pangenome Analysis
+# Author: Lidong
+# Date: 2026-06-07
+###############################################################################
+
+# =============================================================================
+# 1. Install SIFT4G
+# =============================================================================
 git clone --recursive https://github.com/rvaser/sift4g.git sift4g
-cd sift4g/
+cd sift4g
 make
 
 git clone https://github.com/pauline-ng/SIFT4G_Create_Genomic_DB.git scripts_to_build_SIFT_db
 
-# Build annotation database
-cd test_files/
-cp homo_sapiens-test.txt <my_org_config.txt>
-mkdir <PARENT_DIR>
-mkdir <PARENT_DIR>/gene-annotation-src
-mkdir <PARENT_DIR>/chr-src
-mkdir <PARENT_DIR>/dbSNP
-mv bameit2t.fa.gz <PARENT_DIR>/chr-src
-mv bameit2t.gtf.gz <PARENT_DIR>/gene-annotation-src
+# =============================================================================
+# 2. Build Database (Edit config file before running)
+# =============================================================================
+cd test_files
+cp homo_sapiens-test.txt <my_org_config.txt>   # Edit this file with your settings
+
+# Create directory structure
+mkdir -p <PARENT_DIR>/gene-annotation-src
+mkdir -p <PARENT_DIR>/chr-src
+mkdir -p <PARENT_DIR>/dbSNP
+
+# Move genome and annotation files
+mv bameit2t.fa.gz <PARENT_DIR>/chr-src/
+mv bameit2t.gtf.gz <PARENT_DIR>/gene-annotation-src/
+
+# Build database
 perl make-SIFT-db-all.pl -config <my_org_config.txt>
 
-# Annotate VCF files with the SIFT Database
+# =============================================================================
+# 3. Annotate VCF with SIFT4G
+# =============================================================================
 wget https://github.com/pauline-ng/SIFT4G_Annotator/raw/master/SIFT4G_Annotator.jar
-java -jar SIFT4G_Annotator.jar -c -i <Path to input vcf file> -d <Path to SIFT4G database directory> -r <Path to your results folder> -t
+
+java -jar SIFT4G_Annotator.jar \
+    -c \
+    -i <path/to/input.vcf> \
+    -d <path/to/SIFT4G/database> \
+    -r <path/to/results> \
+    -t
+
+echo "[$(date)] INFO: SIFT4G annotation completed"
