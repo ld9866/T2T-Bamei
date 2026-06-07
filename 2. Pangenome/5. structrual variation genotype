@@ -1,32 +1,128 @@
-#Structural variation detection
+#!/bin/bash
 
-# Activate the Conda environment for PanGenie
-conda activate pangenie
+###############################################################################
+# Structural Variation Detection Pipeline (PanGenie)
+#
+# Project: Tabasco Pangenome Analysis
+# Author: Lidong
+# Date: 2026-06-07
+# Version: 1.0
+#
+# Description:
+#    This script performs structural variant (SV) genotyping using PanGenie.
+#    It indexes known SVs from a VCF file and then genotypes individual samples
+#    using paired-end sequencing data, producing sample-specific VCF outputs.
+###############################################################################
 
-# Use PanGenie-index to create an index file
-# -v specifies the input VCF file containing known structural variants
-# -r specifies the reference genome sequence file (in FASTA format)
-# -t specifies the number of threads to use (10 in this case)
-# -o specifies the output prefix for the index files (e.g., "Pig")
-PanGenie-index -v ./path/Data/PanGenie/27.chr20.pang.SV.vcf \
-               -r ./path/Data/PanGenie/Sscrofall.chr20.fa \
-               -t 10 \
-               -o Pig
+# =============================================================================
+# 1. Global Configurations & Environment
+# =============================================================================
+# Conda Environment
+CONDA_ENV="pangenie"
 
-# Perform structural variant genotyping using PanGenie
-# Use process substitution <() to decompress the paired-end FASTQ files
-# -i specifies the input paired-end reads (decompressed from .fastq.gz)
-# -r specifies the reference genome sequence file
-# -v specifies the input VCF file with known structural variants
-# -o specifies the output prefix
-# -s specifies the sample name
-# -t and -j specify the number of threads to use (both set to 10)
-time PanGenie -i <(zcat ./path/Data/PanGenie/sample1.clean_1.fastq.gz \
-                   ./path/Data/PanGenie/sample1.clean_2.fastq.gz) \
-              -r ./path/Data/PanGenie/Sscrofall.chr20.fa \
-              -v ./path/Data/PanGenie/27.chr20.pang.SV.vcf \
-              -o sample1 \
-              -s sample1 \
-              -t 10 \
-              -j 10
+# Input Data Paths
+VCF_INPUT="./path/Data/PanGenie/27.chr20.pang.SV.vcf"
+REF_GENOME="./path/Data/PanGenie/Bamei.chr20.fa"
 
+# Output Settings
+INDEX_PREFIX="Pig"
+
+# Sample Information
+SAMPLE_NAME="sample1"
+SAMPLE_R1="./path/Data/PanGenie/sample1.clean_1.fastq.gz"
+SAMPLE_R2="./path/Data/PanGenie/sample1.clean_2.fastq.gz"
+
+# Resource Allocation
+THREADS=10
+
+# =============================================================================
+# 2. Environment Activation
+# =============================================================================
+echo "[$(date)] INFO: Starting Structural Variation Detection Pipeline..."
+echo "[$(date)] INFO: Activating Conda environment: ${CONDA_ENV}"
+
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "${CONDA_ENV}"
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Failed to activate Conda environment ${CONDA_ENV}"
+    exit 1
+fi
+
+echo "[$(date)] INFO: Conda environment activated successfully"
+
+# =============================================================================
+# 3. Pre-flight Checks
+# =============================================================================
+echo "[$(date)] INFO: Performing pre-flight checks..."
+
+if [ ! -f "${VCF_INPUT}" ]; then
+    echo "ERROR: Input VCF file ${VCF_INPUT} not found!"
+    exit 1
+fi
+
+if [ ! -f "${REF_GENOME}" ]; then
+    echo "ERROR: Reference genome file ${REF_GENOME} not found!"
+    exit 1
+fi
+
+if [ ! -f "${SAMPLE_R1}" ] || [ ! -f "${SAMPLE_R2}" ]; then
+    echo "ERROR: FASTQ files not found!"
+    echo "  R1: ${SAMPLE_R1}"
+    echo "  R2: ${SAMPLE_R2}"
+    exit 1
+fi
+
+# =============================================================================
+# 4. Step 1: Index Known SVs with PanGenie-index
+# =============================================================================
+echo "[$(date)] STAGE 1/2: Creating PanGenie index..."
+
+PanGenie-index \
+    -v "${VCF_INPUT}" \
+    -r "${REF_GENOME}" \
+    -t "${THREADS}" \
+    -o "${INDEX_PREFIX}"
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: PanGenie-index failed!"
+    exit 1
+fi
+
+echo "[$(date)] INFO: Index creation completed successfully"
+
+# =============================================================================
+# 5. Step 2: Genotype SVs for Individual Sample
+# =============================================================================
+echo "[$(date)] STAGE 2/2: Genotyping structural variants for sample: ${SAMPLE_NAME}"
+
+time PanGenie \
+    -i <(zcat "${SAMPLE_R1}" "${SAMPLE_R2}") \
+    -r "${REF_GENOME}" \
+    -v "${VCF_INPUT}" \
+    -o "${SAMPLE_NAME}" \
+    -s "${SAMPLE_NAME}" \
+    -t "${THREADS}" \
+    -j "${THREADS}"
+
+# =============================================================================
+# 6. Pipeline Completion & Summary
+# =============================================================================
+if [ $? -eq 0 ]; then
+    echo "-----------------------------------------------------------------------"
+    echo "Structural Variation Detection Completed Successfully!"
+    echo "Timestamp: $(date)"
+    echo "Sample: ${SAMPLE_NAME}"
+    echo "Output Files:"
+    echo "  - ${INDEX_PREFIX}.index   (PanGenie index)"
+    echo "  - ${SAMPLE_NAME}.vcf.gz   (Genotyped SVs)"
+    echo "  - ${SAMPLE_NAME}.log      (Detailed log file)"
+    echo "-----------------------------------------------------------------------"
+else
+    echo "ERROR: PanGenie genotyping failed. Check logs for details."
+    exit 1
+fi
+
+# Deactivate conda environment
+conda deactivate
+echo "[$(date)] INFO: Pipeline finished. Conda environment deactivated."
