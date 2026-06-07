@@ -1,12 +1,153 @@
-## Build a phylogenetic tree using the mashtree tool based on whole genome sequences
-## Input: All genome files in .fa format in the current directory
-## Output: Phylogenetic tree file tree.dnd in Newick format
+#!/bin/bash
 
-# -numcpus 30: Specify using 30 CPU cores for parallel processing to accelerate computation
-# *.fa: Use wildcard to match all genome files with .fa extension in the current directory
-# > tree.dnd: Redirect the generated tree file output to tree.dnd (standard Newick format)
+###############################################################################
+# Phylogenetic Tree Construction Pipeline (Mashtree)
+#
+# Project: Tabasco Pangenome Analysis
+# Author: Lidong
+# Date: 2026-06-07
+# Version: 1.0
+#
+# Description:
+#   This script builds a phylogenetic tree using Mashtree, which estimates
+#   genome-wide distances based on Mash (MinHash) approximations.
+#   The output is a Newick-format tree file suitable for visualization in
+#   tools like iTOL, ggtree, or FigTree.
+#
+# Input:
+#   All genome FASTA files (.fa) in the specified input directory
+#
+# Output:
+#   tree.dnd: Newick format phylogenetic tree
+#   mashtree.log: Log file with distance matrix and run statistics
+#
+# Dependencies:
+#   - Mashtree (https://github.com/lskatz/mashtree)
+###############################################################################
 
+# =============================================================================
+# 1. Global Configurations & Environment
+# =============================================================================
+# Mashtree Settings
+MASHTREE="/home/lidong/Software/mashtree-1.4.6/bin/mashtree"
 
-/home/lidong/Software/mashtree-1.4.6/bin/mashtree -numcpus 30 *.fa > tree.dnd
+# Resource Allocation
+CPU_THREADS=30
 
-## Visualization on the iTol website
+# Input/Output
+INPUT_PATTERN="*.fa"                    # Pattern to match genome files
+OUTPUT_TREE="tree.dnd"
+LOG_FILE="mashtree.log"
+
+# =============================================================================
+# 2. Pre-flight Checks
+# =============================================================================
+echo "[$(date)] INFO: Starting Mashtree phylogenetic tree construction..."
+
+# Check if Mashtree binary exists
+if [ ! -f "${MASHTREE}" ]; then
+    echo "ERROR: Mashtree not found at ${MASHTREE}"
+    echo "Please check the installation path"
+    exit 1
+fi
+
+# Check if any input FASTA files exist
+fa_files=( ${INPUT_PATTERN} )
+if [ ${#fa_files[@]} -eq 0 ]; then
+    echo "ERROR: No FASTA files matching '${INPUT_PATTERN}' found in current directory"
+    echo "Please ensure genome files have .fa extension"
+    exit 1
+fi
+
+echo "[$(date)] INFO: Found ${#fa_files[@]} genome files:"
+for f in "${fa_files[@]}"; do
+    echo "  - ${f}"
+done
+
+# =============================================================================
+# 3. Execution: Build Phylogenetic Tree with Mashtree
+# =============================================================================
+echo "[$(date)] STAGE: Running Mashtree (Mash-based distance estimation)..."
+
+# Run mashtree and capture both tree output and logs
+${MASHTREE} -numcpus ${CPU_THREADS} ${INPUT_PATTERN} 2> ${LOG_FILE} > ${OUTPUT_TREE}
+
+# Check if execution was successful
+if [ $? -ne 0 ]; then
+    echo "ERROR: Mashtree execution failed!"
+    echo "Check ${LOG_FILE} for details"
+    exit 1
+fi
+
+# =============================================================================
+# 4. Post-processing: Validate Tree File
+# =============================================================================
+echo "[$(date)] INFO: Validating output tree file..."
+
+# Check if tree file is not empty
+if [ ! -s "${OUTPUT_TREE}" ]; then
+    echo "ERROR: Output tree file ${OUTPUT_TREE} is empty!"
+    exit 1
+fi
+
+# Count number of leaves in the tree (approximate)
+leaf_count=$(grep -o ':[0-9.e+-]\+' ${OUTPUT_TREE} | wc -l)
+echo "[$(date)] INFO: Tree contains approximately ${leaf_count} leaves"
+
+# =============================================================================
+# 5. Optional: Generate Distance Matrix Summary
+# =============================================================================
+echo "[$(date)] INFO: Extracting distance matrix from log..."
+
+# The log file contains the pairwise Mash distances
+if [ -f "${LOG_FILE}" ]; then
+    echo "[$(date)] INFO: Log file saved to ${LOG_FILE}"
+    echo "  - Contains pairwise distance matrix and run statistics"
+else
+    echo "WARNING: Log file not found"
+fi
+
+# =============================================================================
+# 6. Pipeline Completion & Summary
+# =============================================================================
+if [ $? -eq 0 ]; then
+    echo "-----------------------------------------------------------------------"
+    echo "Phylogenetic Tree Construction Completed Successfully!"
+    echo "Timestamp: $(date)"
+    echo ""
+    echo "Input: ${#fa_files[@]} genome FASTA files"
+    echo "Output:"
+    echo "  - ${OUTPUT_TREE}  (Newick format tree)"
+    echo "  - ${LOG_FILE}     (Detailed log and distance matrix)"
+    echo ""
+    echo "Visualization Options:"
+    echo "  - Upload ${OUTPUT_TREE} to iTOL (https://itol.embl.de)"
+    echo "  - View with FigTree or ggtree in R"
+    echo "-----------------------------------------------------------------------"
+else
+    echo "ERROR: Pipeline failed. Check logs for details."
+    exit 1
+fi
+
+# =============================================================================
+# 7. Example iTOL Upload Instructions (for reference)
+# =============================================================================
+cat << "EOF"
+
+-----------------------------------------------------------------------
+iTOL Visualization Instructions:
+-----------------------------------------------------------------------
+1. Open https://itol.embl.de in your browser
+2. Click "Upload" button
+3. Select the tree file: tree.dnd
+4. Customize:
+   - Branch lengths: Show/Hide
+   - Label formatting: Font size, rotation
+   - Color ranges: By species group or geographic origin
+5. Export as PDF/SVG for publication
+
+Optional: Add annotation files:
+  - metadata.txt (sample groupings, traits)
+  - colors.txt (custom color schemes)
+-----------------------------------------------------------------------
+EOF
