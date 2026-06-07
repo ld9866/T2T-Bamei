@@ -1,9 +1,99 @@
-# Mitochondrial assembly
+#!/bin/bash
+
+###############################################################################
+# Mitochondrial Genome Assembly (MitoHiFi)
+#
+# Project: Tabasco Pangenome Analysis
+# Author: Lidong
+# Date: 2026-06-07
+# Version: 1.0
+#
+# Description:
+#   This script extracts and assembles the mitochondrial genome from PacBio HiFi
+#   assembly data using MitoHiFi. It identifies mitochondrial contigs based on
+#   reference sequences and annotates the circular mitogenome.
+#
+# Dependencies:
+#   - MitoHiFi (https://github.com/marcelauliano/MitoHiFi)
+#   - Docker (with ghcr.io/marcelauliano/mitohifi:master)
+###############################################################################
+
+# =============================================================================
+# 1. Global Configurations
+# =============================================================================
+# Docker image
+MITOHIFI_IMAGE="ghcr.io/marcelauliano/mitohifi:master"
+
+# Input files
+ASSEMBLY="/home/lidong/Bamei.hifi.bp.p_ctg.fa"
+REF_FASTA="/home/lidong/sequence.fasta"
+REF_GB="/home/lidong/sequence.gb"
+
+# Output settings
+THREADS=64
+GENETIC_CODE="animal"           # Options: animal, yeast, mold, protozoan, etc.
+
+# Working directory (mount point inside container)
+WORKDIR="/work"
+HOST_WORKDIR="/home/lidong"
+
+# =============================================================================
+# 2. Pre-flight Checks
+# =============================================================================
+echo "[$(date)] INFO: Starting MitoHiFi mitochondrial assembly..."
+
+# Check input files
+if [ ! -f "${ASSEMBLY}" ]; then
+    echo "ERROR: Assembly file not found: ${ASSEMBLY}"
+    exit 1
+fi
+
+if [ ! -f "${REF_FASTA}" ]; then
+    echo "ERROR: Reference FASTA not found: ${REF_FASTA}"
+    exit 1
+fi
+
+if [ ! -f "${REF_GB}" ]; then
+    echo "ERROR: Reference GenBank file not found: ${REF_GB}"
+    exit 1
+fi
+
+# =============================================================================
+# 3. Run MitoHiFi
+# =============================================================================
+echo "[$(date)] INFO: Running MitoHiFi (mitochondrial extraction and assembly)..."
+echo "  - Assembly: $(basename ${ASSEMBLY})"
+echo "  - Reference FASTA: $(basename ${REF_FASTA})"
+echo "  - Reference GenBank: $(basename ${REF_GB})"
+echo "  - Genetic code: ${GENETIC_CODE}"
+echo "  - Threads: ${THREADS}"
+
 docker run --rm \
---volume /home/lidong:/work \
-ghcr.io/marcelauliano/mitohifi:master \
-mitohifi.py \
--c /work/Bamei.hifi.bp.p_ctg.fa \
--f /work/sequence.fasta \
--g /work/sequence.gb \
--t 64 -a animal
+    --volume ${HOST_WORKDIR}:${WORKDIR} \
+    ${MITOHIFI_IMAGE} \
+    mitohifi.py \
+    -c ${WORKDIR}/$(basename ${ASSEMBLY}) \
+    -f ${WORKDIR}/$(basename ${REF_FASTA}) \
+    -g ${WORKDIR}/$(basename ${REF_GB}) \
+    -t ${THREADS} \
+    -a ${GENETIC_CODE}
+
+# =============================================================================
+# 4. Pipeline Completion & Summary
+# =============================================================================
+if [ $? -eq 0 ]; then
+    echo "-----------------------------------------------------------------------"
+    echo "Mitochondrial Assembly Completed Successfully!"
+    echo "Timestamp: $(date)"
+    echo ""
+    echo "Output files (located in current directory):"
+    echo "  - *_mitogenome.fasta      (Final mitochondrial genome)"
+    echo "  - *_mitogenome.gb         (GenBank annotation)"
+    echo "  - *_mitogenome.gff        (GFF annotation)"
+    echo "  - *_circularization.log   (Circularization check)"
+    echo "  - *_contigs_stats.tsv     (Contig statistics)"
+    echo "-----------------------------------------------------------------------"
+else
+    echo "ERROR: MitoHiFi pipeline failed!"
+    exit 1
+fi
